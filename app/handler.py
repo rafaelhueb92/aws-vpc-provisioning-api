@@ -1,65 +1,98 @@
-import boto3
 import json
-import uuid
+import logging
+
+import boto3
+from botocore.exceptions import ClientError
+from pydantic import ValidationError
+
+from config import get_settings
 from models.vpc import CreateVpcRequest
+from services.storage import Storage
+from services.subnet import Subnet
 from services.vpc import VPC
 
-client = boto3.client('ec2',region_name='us-east-1')
+settings = get_settings()
+logging.basicConfig(level=settings.log_level)
+logger = logging.getLogger(__name__)
 
-vpc = VPC(client)
+client = boto3.client(
+    'ec2',
+    region_name=settings.aws_region,
+    endpoint_url=settings.aws_endpoint_url,
+)
 
-def get_vpc(event, context):
-    pass
+client_dynamo = boto3.resource(
+    "dynamodb",
+    region_name=settings.aws_region,
+    endpoint_url=settings.aws_endpoint_url
+)
 
-def delete_vpc(event, context):
-    pass
+vpc = VPC(client,logger)
+subnet = Subnet(client,logger)
+storage = Storage(client_dynamo,settings.vpc_table)
+
+def _response(status_code: int, payload) -> dict:
+    return {'statusCode': status_code, 'body': json.dumps(payload, default=str)}
 
 def lambda_handler(event:dict, context:dict):
+    try:
+        return _route(event)
+    except (ValidationError, ValueError) as error:
+        return _response(400, {'message': str(error)})
+    except ClientError as error:
+        code = error.response['Error']['Code']
+        return _response(404 if code.endswith('NotFound') else 502, {'message': code})
+
+def _route(event:dict) -> dict:
     method = event.get('httpMethod')
     path = event.get('path')
-    vpc_request = CreateVpcRequest(**json.loads(event.get('body', {})))
+    path_parameters = event.get('pathParameters') or {}
 
-    print("VPC Request", vpc_request)
+    if (path or '').startswith('/vpcs'):
 
-    if path == '/vpcs':
+        if method == 'POST':
 
-        if method == 'GET':
-            return get_vpc(event, context)
-        elif method == 'POST':
-            name = vpc_request.name
-            cidr = vpc_request.cidr
-            return vpc.create_vpc(name,cidr)
-        elif method == 'DELETE':
-            return delete_vpc(event, context)
-        
-    return {
-        'statusCode': 400,
-        'body': json.dumps({'message': 'Unsupported method or path'})
-    }
+            vpc_request = CreateVpcRequest(**json.loads(event.get('body') or '{}'))
 
-if __name__ == '__main__':
-    event = {
-        'httpMethod':'POST',
-        'path': '/vpcs',
-        'body': json.dumps({
-            'name': 'my-vpc',
-            'cidr': '10.0.0.0/16',
-            'subnets': [
-                {
-                    'name': 'public-subnet-1',
-                    'cidr': '10.0.1.0/24',
-                    'availability_zone': 'us-east-1a',
-                    'is_public': True
-                },
-                {
-                    'name': 'private-subnet-1',
-                    'cidr': '10.0.2.0/24',
-                    'availability_zone': 'us-east-1b',
-                    'is_public': False
-                }
-            ]
-        })
-    }
+            logger.info("Requesting VPC Creation %s",vpc_request)
 
-    
-    lambda_handler(event,{})
+            vpc_id = vpc.create_vpc(vpc_request.name,vpc_request.cidr)
+
+            subnets = subnet.create_subnets(
+                vpc_id,[definition.model_dump() for definition in vpc_request.subnets]
+            )
+
+            storage.insert(vpc_id,vpc_id,{'name': vpc_request.name,'cidr': vpc_request.cidr})
+            for created in subnets:
+                storage.insert(vpc_id,created['subnet_id'],created)
+
+            return _response(200, {
+                'message': f'VPC {vpc_id} created with success.',
+                'vpc_id': vpc_id,
+                'subnet_ids': [created['subnet_id'] for created in subnets]
+            })
+        else:
+             vpc_id = path_parameters.get('vpc_id')
+
+             if method not in ('GET', 'DELETE'):
+                 return _response(400, {'message': 'Unsupported method or path'})
+
+             if not vpc_id:
+                 return _response(400, {'message': 'vpc_id path parameter is required'})
+
+             if method == 'GET':
+                founded_vpc = storage.get_by_id(vpc_id)
+                if not founded_vpc:
+                    return _response(404, {'message': f'VPC {vpc_id} not found'})
+                return _response(200, founded_vpc)
+             elif method == 'DELETE':
+                  subnet.delete_subnets(vpc_id)
+                  vpc.delete_vpc(vpc_id)
+                  for stored in storage.list_all(vpc_id):
+                      storage.delete(vpc_id,stored['sort_key'])
+                  return _response(200, {'message': f'VPC {vpc_id} deleted.'})
+
+    elif (path or '').startswith('/health') and method == 'GET':
+        return _response(200, {'health': True})
+
+    return _response(400, {'message': 'Unsupported method or path'})

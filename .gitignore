@@ -1,3 +1,24 @@
 venv/
 .abacusai
 __pycache__
+
+# terraform
+.terraform/
+.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+tfplan
+crash.log
+infra/build/
+.terraform/
+.terraform.*
+
+.ruff_cache
+.pytest_cache/
+
+.DS_Store
+.env
+.vscode/
+.idea/
+
+todo.md

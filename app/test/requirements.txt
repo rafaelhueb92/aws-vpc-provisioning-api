@@ -1,13 +1,15 @@
-pytestannotated-types==0.8.0
+annotated-types==0.8.0
 boto3==1.43.93
 botocore==1.43.93
 jmespath==1.1.0
+moto==5.2.3
 pydantic==2.13.5
 pydantic_core==2.46.5
+pytest==8.3.5
 python-dateutil==2.9.0.post0
+ruff==0.16.7
 s3transfer==0.19.2
 six==1.17.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 urllib3==2.7.0
-pytest

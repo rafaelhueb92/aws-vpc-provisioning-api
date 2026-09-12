@@ -1,0 +1,181 @@
+openapi: "3.0.3"
+
+info:
+  title: VPC Provisioning API
+  description: Provisions VPCs, subnets and internet gateways on demand.
+  version: "1.0.0"
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Liveness probe
+      description: Public endpoint, no token required.
+      tags: [Health]
+      responses:
+        "200":
+          description: The service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  health:
+                    type: boolean
+      x-amazon-apigateway-integration:
+        type: aws_proxy
+        httpMethod: POST
+        payloadFormatVersion: "1.0"
+        uri: ${lambda_invoke_uri}
+
+  /vpcs:
+    post:
+      operationId: createVpc
+      summary: Create a VPC with its subnets
+      tags: [Vpcs]
+      security:
+        - CognitoJwtAuthorizer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVpcRequest"
+      responses:
+        "200":
+          description: The VPC was created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  vpc_id:
+                    type: string
+                  subnet_ids:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          description: The request body is missing or invalid.
+      x-amazon-apigateway-integration:
+        type: aws_proxy
+        httpMethod: POST
+        payloadFormatVersion: "1.0"
+        uri: ${lambda_invoke_uri}
+
+  /vpcs/{vpc_id}:
+    get:
+      operationId: getVpc
+      summary: Get a stored VPC
+      tags: [Vpcs]
+      security:
+        - CognitoJwtAuthorizer: []
+      parameters:
+        - name: vpc_id
+          in: path
+          required: true
+          description: Identifier of the VPC, for example vpc-0a1b2c3d.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The stored VPC record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpcRecord"
+        "404":
+          description: No VPC with that id is stored.
+      x-amazon-apigateway-integration:
+        type: aws_proxy
+        httpMethod: POST
+        payloadFormatVersion: "1.0"
+        uri: ${lambda_invoke_uri}
+
+    delete:
+      operationId: deleteVpc
+      summary: Delete a VPC and everything provisioned with it
+      tags: [Vpcs]
+      security:
+        - CognitoJwtAuthorizer: []
+      parameters:
+        - name: vpc_id
+          in: path
+          required: true
+          description: Identifier of the VPC to delete.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The VPC, its subnets, its internet gateway and the stored records were deleted.
+        "404":
+          description: No VPC with that id exists.
+      x-amazon-apigateway-integration:
+        type: aws_proxy
+        httpMethod: POST
+        payloadFormatVersion: "1.0"
+        uri: ${lambda_invoke_uri}
+
+components:
+  securitySchemes:
+    CognitoJwtAuthorizer:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: ${cognito_issuer}
+          scopes: {}
+      x-amazon-apigateway-authorizer:
+        type: jwt
+        identitySource: $request.header.Authorization
+        jwtConfiguration:
+          issuer: ${cognito_issuer}
+          audience:
+            - ${cognito_client_id}
+
+  schemas:
+    SubnetDefinition:
+      type: object
+      required: [name, cidr, availability_zone]
+      properties:
+        name:
+          type: string
+        cidr:
+          type: string
+          example: 10.0.1.0/24
+        availability_zone:
+          type: string
+          example: eu-central-1a
+        is_public:
+          type: boolean
+          default: false
+
+    CreateVpcRequest:
+      type: object
+      required: [name, cidr]
+      properties:
+        name:
+          type: string
+        cidr:
+          type: string
+          example: 10.0.0.0/16
+        subnets:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubnetDefinition"
+
+    VpcRecord:
+      type: object
+      properties:
+        vpc_id:
+          type: string
+        sort_key:
+          type: string
+        name:
+          type: string
+        cidr:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
