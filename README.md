@@ -26,12 +26,12 @@ records in **DynamoDB**.
 
 ## 🚏 Routes
 
-| Method | Path | Auth | What it does |
-| --- | --- | --- | --- |
-| `POST` | `/vpcs` | JWT | Creates the VPC and its subnets, then stores the records |
-| `GET` | `/vpcs/{vpc_id}` | JWT | Returns the stored VPC |
-| `DELETE` | `/vpcs/{vpc_id}` | JWT | Deletes the subnets, any attached internet gateway, the VPC and the stored records |
-| `GET` | `/health` | public | Liveness probe |
+| Method   | Path             | Auth   | What it does                                                                       |
+| -------- | ---------------- | ------ | ---------------------------------------------------------------------------------- |
+| `POST`   | `/vpcs`          | JWT    | Creates the VPC and its subnets, then stores the records                           |
+| `GET`    | `/vpcs/{vpc_id}` | JWT    | Returns the stored VPC                                                             |
+| `DELETE` | `/vpcs/{vpc_id}` | JWT    | Deletes the subnets, any attached internet gateway, the VPC and the stored records |
+| `GET`    | `/health`        | public | Liveness probe                                                                     |
 
 ## 📁 Project layout
 
@@ -58,7 +58,7 @@ cd infra
 terraform init \
   -backend-config="bucket=<your-tf-state-bucket>" \
   -backend-config="key=vpc-provisioning-api/terraform.tfstate" \
-  -backend-config="region=eu-central-1" \
+  -backend-config="region=us-east-1" \
   -backend-config="dynamodb_table=<your-lock-table>" \
   -backend-config="encrypt=true"
 
@@ -68,12 +68,12 @@ terraform apply
 Then read the outputs:
 
 ```bash
-terraform output api_endpoint          # https://xxxxxxxx.execute-api.eu-central-1.amazonaws.com
+terraform output api_endpoint          # https://xxxxxxxx.execute-api.us-east-1.amazonaws.com
 terraform output cognito_user_pool_id
 terraform output cognito_app_client_id
 ```
 
-Useful variables: `aws_region` (default `eu-central-1`), `environment` (default `dev`),
+Useful variables: `aws_region` (default `us-east-1`), `environment` (default `dev`),
 `dynamodb_table_name` (default `vpc-provisioning-records`).
 
 > The first apply must be run locally with admin credentials: it creates the GitHub OIDC
@@ -113,8 +113,8 @@ curl -X POST "$API/vpcs" \
         "name": "my-vpc",
         "cidr": "10.0.0.0/16",
         "subnets": [
-          {"name": "public-1",  "cidr": "10.0.1.0/24", "availability_zone": "eu-central-1a", "is_public": true},
-          {"name": "private-1", "cidr": "10.0.2.0/24", "availability_zone": "eu-central-1b", "is_public": false}
+          {"name": "public-1",  "cidr": "10.0.1.0/24", "availability_zone": "us-east-1a", "is_public": true},
+          {"name": "private-1", "cidr": "10.0.2.0/24", "availability_zone": "us-east-1b", "is_public": false}
         ]
       }'
 # -> {"message": "VPC vpc-0123... created with success.", "vpc_id": "vpc-0123...", "subnet_ids": ["subnet-...", "subnet-..."]}
@@ -139,20 +139,20 @@ pip install -r requirements.txt          # runtime deps
 pip install -r test/requirements.txt     # pytest, moto, ruff
 
 # run the API: keeps credentials local, everything else comes from the env
-DDB_TABLE_NAME=vpc-provisioning-records AWS_REGION=eu-central-1 \
+DDB_TABLE_NAME=vpc-provisioning-records AWS_REGION=us-east-1 \
   python -c "import json, handler; print(handler.lambda_handler({'httpMethod':'GET','path':'/health'}, {}))"
 ```
 
 ### ⚙️ Environment variables
 
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `DDB_TABLE_NAME` | yes | — | DynamoDB table for the VPC records |
-| `AWS_REGION` | no | `us-east-1` | Region of the clients (Lambda sets it automatically) |
-| `LOG_LEVEL` | no | `INFO` | Logger verbosity |
-| `AWS_ENDPOINT_URL` | no | — | Point boto3 at LocalStack or moto instead of AWS |
-| `VPC_WAITER_DELAY` · `VPC_WAITER_MAX_ATTEMPTS` · `VPC_WAITER_ENABLED` | no | `5` · `12` · `true` | EC2 waiter tuning for VPC creation |
-| `SUBNET_WAITER_DELAY` · `SUBNET_WAITER_MAX_ATTEMPTS` · `SUBNET_MAP_PUBLIC_IP` · `SUBNET_MAX_WORKERS` | no | `5` · `12` · `true` · `5` | Subnet waiter, public IP and thread pool tuning |
+| Variable                                                                                             | Required | Default                   | Purpose                                              |
+| ---------------------------------------------------------------------------------------------------- | -------- | ------------------------- | ---------------------------------------------------- |
+| `DDB_TABLE_NAME`                                                                                     | yes      | —                         | DynamoDB table for the VPC records                   |
+| `AWS_REGION`                                                                                         | no       | `us-east-1`               | Region of the clients (Lambda sets it automatically) |
+| `LOG_LEVEL`                                                                                          | no       | `INFO`                    | Logger verbosity                                     |
+| `AWS_ENDPOINT_URL`                                                                                   | no       | —                         | Point boto3 at LocalStack or moto instead of AWS     |
+| `VPC_WAITER_DELAY` · `VPC_WAITER_MAX_ATTEMPTS` · `VPC_WAITER_ENABLED`                                | no       | `5` · `12` · `true`       | EC2 waiter tuning for VPC creation                   |
+| `SUBNET_WAITER_DELAY` · `SUBNET_WAITER_MAX_ATTEMPTS` · `SUBNET_MAP_PUBLIC_IP` · `SUBNET_MAX_WORKERS` | no       | `5` · `12` · `true` · `5` | Subnet waiter, public IP and thread pool tuning      |
 
 ## ✅ Tests
 

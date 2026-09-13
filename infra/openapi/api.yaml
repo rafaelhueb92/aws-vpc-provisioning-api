@@ -146,7 +146,7 @@ components:
           example: 10.0.1.0/24
         availability_zone:
           type: string
-          example: eu-central-1a
+          example: us-east-1a
         is_public:
           type: boolean
           default: false
