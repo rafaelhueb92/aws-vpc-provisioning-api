@@ -109,7 +109,6 @@ resource "aws_lambda_function" "this" {
   }
 
   depends_on = [
-    null_resource.build_lambda,
     aws_iam_role_policy.lambda,
   ]
 }
