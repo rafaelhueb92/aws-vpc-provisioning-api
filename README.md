@@ -93,6 +93,10 @@ terraform output cognito_user_pool_id
 terraform output cognito_app_client_id
 ```
 
+**Next step — create a Cognito user and get an IdToken.** The API sits behind the Cognito
+authorizer, so there is nothing to call until a user exists: [Get a token](#-get-a-token) creates
+the user and exchanges it for the IdToken, then [Use the API](#-use-the-api) shows the calls.
+
 Useful variables: `aws_region` (default `us-east-1`), `environment` (default `dev`),
 `dynamodb_table_name` (default `vpc-provisioning-records`).
 
@@ -175,20 +179,38 @@ curl -s https://raw.githubusercontent.com/rafaelhueb92/oidc-github-actions-role-
 
 ## 🔑 Get a token
 
-```bash
-POOL_ID=$(terraform -chdir=infra output -raw cognito_user_pool_id)
-CLIENT_ID=$(terraform -chdir=infra output -raw cognito_app_client_id)
+Every route except `/health` needs an IdToken issued by the User Pool that comes with the stack.
+Three steps, run from the repository root.
 
-# create a user and set a permanent password
-aws cognito-idp admin-create-user --user-pool-id "$POOL_ID" --username you@example.com
-aws cognito-idp admin-set-user-password --user-pool-id "$POOL_ID" \
-  --username you@example.com --password 'Passw0rd!' --permanent
+1. Read the ids the stack created:
 
-# get the token
-aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$CLIENT_ID" \
-  --auth-parameters USERNAME=you@example.com,PASSWORD='Passw0rd!' \
-  --query 'AuthenticationResult.IdToken' --output text
-```
+   ```bash
+   POOL_ID=$(terraform -chdir=infra output -raw cognito_user_pool_id)
+   CLIENT_ID=$(terraform -chdir=infra output -raw cognito_app_client_id)
+   ```
+
+2. Create the user and set a permanent password. The pool signs in by email
+   (`username_attributes = ["email"]` in `infra/cognito.tf`) and `--permanent` confirms the user,
+   so the invitation email and its code are not needed — add `--message-action SUPPRESS` to the
+   first command if you would rather Cognito does not send it at all:
+
+   ```bash
+   aws cognito-idp admin-create-user --user-pool-id "$POOL_ID" --username you@example.com
+   aws cognito-idp admin-set-user-password --user-pool-id "$POOL_ID" \
+     --username you@example.com --password 'Passw0rd!' --permanent
+   ```
+
+3. Exchange the credentials for the IdToken. The app client allows `USER_PASSWORD_AUTH`
+   (`infra/cognito.tf`), so the password flow works without SRP:
+
+   ```bash
+   aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH --client-id "$CLIENT_ID" \
+     --auth-parameters USERNAME=you@example.com,PASSWORD='Passw0rd!' \
+     --query 'AuthenticationResult.IdToken' --output text
+   ```
+
+The IdToken is valid for 60 minutes (`id_token_validity` in `infra/cognito.tf`); send it to the API
+as `Authorization: Bearer <token>`.
 
 ## 🧪 Use the API
 
