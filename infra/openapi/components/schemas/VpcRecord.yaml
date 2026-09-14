@@ -1,0 +1,14 @@
+VpcRecord:
+  type: object
+  properties:
+    vpc_id:
+      type: string
+    sort_key:
+      type: string
+    name:
+      type: string
+    cidr:
+      type: string
+    updated_at:
+      type: string
+      format: date-time

@@ -10,10 +10,10 @@ locals {
     var.tags,
   )
 
-  app_dir           = "${path.module}/../app"
-  lambda_build_dir  = "${path.module}/build"
-  lambda_zip_path   = "${path.module}/build/lambda.zip"
-  openapi_spec_path = "${path.module}/openapi/api.yaml"
+  app_dir          = "${path.module}/../app"
+  lambda_build_dir = "${path.module}/build"
+  lambda_zip_path  = "${path.module}/build/lambda.zip"
+  openapi_dir      = "${path.module}/openapi"
 
   lambda_python_version = trimprefix(var.lambda_runtime, "python")
 
@@ -30,4 +30,42 @@ locals {
 
   cognito_issuer    = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.this.id}"
   cognito_client_id = aws_cognito_user_pool_client.this.id
+}
+
+# The OpenAPI document imported by API Gateway is assembled from infra/openapi:
+# api.yaml holds the metadata, one file per path lives in paths/ and one file per
+# schema or security scheme lives in components/. Fragments have no fixed name
+# contract, the key inside the file is what ends up in the document, so a new
+# path or schema only means a new file.
+locals {
+  openapi_template_vars = {
+    lambda_invoke_uri = local.lambda_invoke_uri
+    cognito_issuer    = local.cognito_issuer
+    cognito_client_id = local.cognito_client_id
+  }
+
+  openapi_fragment_dirs = {
+    paths            = "${local.openapi_dir}/paths"
+    schemas          = "${local.openapi_dir}/components/schemas"
+    security_schemes = "${local.openapi_dir}/components/securitySchemes"
+  }
+
+  openapi_fragments = {
+    for name, dir in local.openapi_fragment_dirs :
+    name => merge([
+      for file in fileset(dir, "*.yaml") :
+      yamldecode(templatefile("${dir}/${file}", local.openapi_template_vars))
+    ]...)
+  }
+
+  openapi_spec = merge(
+    yamldecode(templatefile("${local.openapi_dir}/api.yaml", local.openapi_template_vars)),
+    {
+      paths = local.openapi_fragments.paths
+      components = {
+        schemas         = local.openapi_fragments.schemas
+        securitySchemes = local.openapi_fragments.security_schemes
+      }
+    },
+  )
 }

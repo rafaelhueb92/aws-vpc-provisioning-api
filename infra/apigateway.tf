@@ -4,11 +4,7 @@ resource "aws_apigatewayv2_api" "this" {
 
   protocol_type = "HTTP"
 
-  body = templatefile(local.openapi_spec_path, {
-    lambda_invoke_uri = local.lambda_invoke_uri
-    cognito_issuer    = local.cognito_issuer
-    cognito_client_id = local.cognito_client_id
-  })
+  body = jsonencode(local.openapi_spec)
 }
 
 resource "aws_lambda_permission" "apigw" {

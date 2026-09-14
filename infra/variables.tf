@@ -17,15 +17,7 @@ variable "environment" {
 }
 
 variable "lambda_runtime" {
-  description = <<-EOT
-    Python runtime for the Lambda function.
-
-    app/ has no pyproject.toml, setup.cfg or python version constraint: the only
-    dependency manifest is app/requirements.txt, which pins no interpreter
-    version. The default therefore follows the fallback python3.12, which
-    satisfies every pin in that file (boto3 1.43.93, pydantic 2.13.5 /
-    pydantic_core 2.46.5 all support Python >= 3.9).
-  EOT
+  description = "Python runtime for the Lambda function."
   type        = string
   default     = "python3.12"
 }
@@ -58,18 +50,6 @@ variable "cognito_user_pool_name" {
   description = "Name of the Cognito User Pool that issues the JWTs accepted by the API Gateway authorizer."
   type        = string
   default     = "vpc-api-user-pool"
-}
-
-variable "github_repository" {
-  description = "GitHub repository allowed to assume the deployment role through OIDC, in owner/repo form. Override this with your own repository."
-  type        = string
-  default     = "your-org/your-repo-name"
-}
-
-variable "github_branch" {
-  description = "Branch allowed to assume the deployment role for pushes (pull request plans are allowed separately through the pull_request subject)."
-  type        = string
-  default     = "main"
 }
 
 variable "tags" {

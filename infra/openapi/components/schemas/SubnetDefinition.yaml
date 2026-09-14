@@ -1,0 +1,15 @@
+SubnetDefinition:
+  type: object
+  required: [name, cidr, availability_zone]
+  properties:
+    name:
+      type: string
+    cidr:
+      type: string
+      example: 10.0.1.0/24
+    availability_zone:
+      type: string
+      example: us-east-1a
+    is_public:
+      type: boolean
+      default: false

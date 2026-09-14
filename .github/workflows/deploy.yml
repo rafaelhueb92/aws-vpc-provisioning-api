@@ -2,9 +2,15 @@ name: deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      destroy:
+        description: Destroy the stack instead of applying it
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -54,7 +60,7 @@ jobs:
         run: python -m pytest -v
 
   terraform:
-    name: ${{ github.event_name == 'pull_request' && 'plan' || 'apply' }}
+    name: ${{ github.event_name == 'pull_request' && 'plan' || (inputs.destroy && 'destroy' || 'apply') }}
     runs-on: ubuntu-latest
     needs: test
 
@@ -78,27 +84,12 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Build Lambda deployment package
-        working-directory: .
+        working-directory: ${{ github.workspace }}
         run: |
-          set -euo pipefail
-          rm -rf "${LAMBDA_BUILD_DIR}"
-          mkdir -p "${LAMBDA_BUILD_DIR}"
-
-          python -m pip install --quiet --target "${LAMBDA_BUILD_DIR}" \
-            --platform manylinux2014_x86_64 --implementation cp \
-            --python-version "${PYTHON_VERSION}" --only-binary=:all: \
-            -r app/requirements.txt
-
-          rsync -a \
-            --exclude 'venv' --exclude 'test' --exclude '.abacusai' \
-            --exclude '__pycache__' --exclude '*.pyc' \
-            app/ "${LAMBDA_BUILD_DIR}/"
-
-          cd "${LAMBDA_BUILD_DIR}"
-          rm -f lambda.zip
-          zip -q -r lambda.zip . -x '*__pycache__*' '*.pyc'
-          ls -lh lambda.zip
-          unzip -l lambda.zip | grep -E "handler.py|_pydantic_core" || true
+          bash scripts/build_lambda.sh \
+            --app-dir app \
+            --out-dir "${LAMBDA_BUILD_DIR}" \
+            --python-version "${PYTHON_VERSION}"
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -112,7 +103,6 @@ jobs:
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=${{ vars.TF_STATE_KEY || 'vpc-provisioning-api/terraform.tfstate' }}" \
             -backend-config="region=${AWS_REGION}" \
-            -backend-config="dynamodb_table=${{ secrets.TF_STATE_LOCK_TABLE }}" \
             -backend-config="encrypt=true"
 
       - name: Terraform fmt
@@ -122,8 +112,17 @@ jobs:
         run: terraform validate -no-color
 
       - name: Terraform plan
+        if: ${{ !inputs.destroy }}
         run: terraform plan -input=false -no-color -out=tfplan
 
       - name: Terraform apply
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: ${{ !inputs.destroy && github.event_name == 'push' }}
         run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Terraform destroy
+        if: ${{ inputs.destroy }}
+        run: terraform destroy -input=false -no-color -auto-approve
+
+      - name: Terraform Ouptut
+        if: ${{ !inputs.destroy && github.event_name == 'push' }}
+        run: terraform output

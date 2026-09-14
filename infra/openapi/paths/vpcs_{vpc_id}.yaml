@@ -1,0 +1,52 @@
+"/vpcs/{vpc_id}":
+  get:
+    operationId: getVpc
+    summary: Get a stored VPC
+    tags: [Vpcs]
+    security:
+      - CognitoJwtAuthorizer: []
+    parameters:
+      - name: vpc_id
+        in: path
+        required: true
+        description: Identifier of the VPC, for example vpc-0a1b2c3d.
+        schema:
+          type: string
+    responses:
+      "200":
+        description: The stored VPC record.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VpcRecord"
+      "404":
+        description: No VPC with that id is stored.
+    x-amazon-apigateway-integration:
+      type: aws_proxy
+      httpMethod: POST
+      payloadFormatVersion: "1.0"
+      uri: ${lambda_invoke_uri}
+
+  delete:
+    operationId: deleteVpc
+    summary: Delete a VPC and everything provisioned with it
+    tags: [Vpcs]
+    security:
+      - CognitoJwtAuthorizer: []
+    parameters:
+      - name: vpc_id
+        in: path
+        required: true
+        description: Identifier of the VPC to delete.
+        schema:
+          type: string
+    responses:
+      "200":
+        description: The VPC, its subnets, its internet gateway and the stored records were deleted.
+      "404":
+        description: No VPC with that id exists.
+    x-amazon-apigateway-integration:
+      type: aws_proxy
+      httpMethod: POST
+      payloadFormatVersion: "1.0"
+      uri: ${lambda_invoke_uri}

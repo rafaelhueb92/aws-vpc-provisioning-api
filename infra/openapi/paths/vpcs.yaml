@@ -1,0 +1,36 @@
+"/vpcs":
+  post:
+    operationId: createVpc
+    summary: Create a VPC with its subnets
+    tags: [Vpcs]
+    security:
+      - CognitoJwtAuthorizer: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CreateVpcRequest"
+    responses:
+      "200":
+        description: The VPC was created.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                vpc_id:
+                  type: string
+                subnet_ids:
+                  type: array
+                  items:
+                    type: string
+      "400":
+        description: The request body is missing or invalid.
+    x-amazon-apigateway-integration:
+      type: aws_proxy
+      httpMethod: POST
+      payloadFormatVersion: "1.0"
+      uri: ${lambda_invoke_uri}

@@ -43,9 +43,30 @@ app/                 Lambda application (Python 3.12)
   services/          vpc.py · subnet.py · storage.py  (boto3)
   test/              pytest suite + fixtures
 infra/               Terraform: Lambda, API Gateway, DynamoDB, Cognito, OIDC
-  openapi/api.yaml   OpenAPI 3.0 spec imported by API Gateway
+  apigateway.tf      imports the assembled OpenAPI document as the API body
+  openapi/           OpenAPI 3.0 spec, split by concern
+    api.yaml         root document: openapi version + info
+    paths/           one file per path, with its operations
+    components/
+      schemas/       one file per schema
+      securitySchemes/  one file per security scheme
 .github/workflows/   CI/CD: ruff + tests, then terraform plan/apply
+permission-policy.json  IAM permissions for the CI deploy role (see Deploy role)
 ```
+
+### 📄 OpenAPI spec
+
+API Gateway imports a single document, so `infra/local.tf` assembles it at plan time from the
+files above — no build step and nothing generated to keep in sync. The key *inside* each fragment
+is what ends up in the document, which means the filename has no meaning: a new endpoint or schema
+is a new file, and no Terraform change. Adding `paths/tags.yaml` containing `"/tags":` publishes
+`/tags`; adding `components/schemas/TagRecord.yaml` containing `TagRecord:` adds that schema. Keys
+must be unique across files, since the fragments are merged into one mapping.
+
+Every fragment is also a Terraform template, so `${lambda_invoke_uri}` (the Lambda integrations),
+`${cognito_issuer}` and `${cognito_client_id}` (the JWT authorizer) are substituted before the
+document is imported. The body handed to API Gateway is JSON encoded from the *decoded* fragments,
+so reindenting or reordering a fragment produces no diff on its own — changing a value does.
 
 ## 🚀 Deploy
 
@@ -59,7 +80,6 @@ terraform init \
   -backend-config="bucket=<your-tf-state-bucket>" \
   -backend-config="key=vpc-provisioning-api/terraform.tfstate" \
   -backend-config="region=us-east-1" \
-  -backend-config="dynamodb_table=<your-lock-table>" \
   -backend-config="encrypt=true"
 
 terraform apply
@@ -77,7 +97,81 @@ Useful variables: `aws_region` (default `us-east-1`), `environment` (default `de
 `dynamodb_table_name` (default `vpc-provisioning-records`).
 
 > The first apply must be run locally with admin credentials: it creates the GitHub OIDC
-> provider and the deploy role that CI assumes afterwards.
+> provider and the deploy role that CI assumes afterwards. If you would rather not run the admin
+> apply, create the deploy role first with the bootstrap script — see
+> [Deploy role (GitHub OIDC)](#-deploy-role-github-oidc).
+
+## 🔐 Deploy role (GitHub OIDC)
+
+CI assumes an IAM role through GitHub OIDC, so no AWS access keys are stored in the repository.
+The role can be created either way, but **pick one** — the two approaches are not meant to be
+combined:
+
+|                                    | [`oidc-github-actions-role-aws`](https://github.com/rafaelhueb92/oidc-github-actions-role-aws) | `infra/oidc.tf`                        |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Creates                            | OIDC provider (if missing) + role `GitHubActionsRole-aws-vpc-provisioning-api`                  | OIDC provider + role `vpc-provisioning-api-dev-github-actions-role` |
+| Permissions                        | `permission-policy.json` from this repo                                                         | the same statements, inline in `oidc.tf` |
+| Runs before                          | the first `terraform apply`                                                                     | during a local `terraform apply` with admin credentials |
+
+### Bootstrap with the script
+
+Prerequisites: the AWS CLI configured with credentials that can manage IAM, `jq` (the script reads
+the repository metadata from the GitHub API), plus `curl` and `openssl`.
+
+```bash
+# run from the root of this repository: the script uses the folder name as the repository
+# name, and reads ./permission-policy.json
+export GIT_HUB_USER_NAME="rafaelhueb92"
+
+curl -s https://raw.githubusercontent.com/rafaelhueb92/oidc-github-actions-role-aws/refs/heads/master/oidc/create-role.sh | bash
+```
+
+The script:
+
+1. reads the AWS account ID from `sts:GetCallerIdentity`
+2. creates the GitHub OIDC provider `token.actions.githubusercontent.com` if it does not exist
+3. creates the role `GitHubActionsRole-aws-vpc-provisioning-api`, trusting this repository through
+   `sts:AssumeRoleWithWebIdentity` on `refs/heads/main`, `refs/heads/master`, `pull_request` and
+   `pull_request_target`
+4. attaches `permission-policy.json` as the inline policy `GitHubActionsPolicy-aws-vpc-provisioning-api`
+5. prints the role ARN
+
+Use that ARN as the `AWS_DEPLOY_ROLE_ARN` repository secret (together with `TF_STATE_BUCKET`) and
+the workflow deploys without a single long-lived key. Prefer keeping the
+script inside the project? Clone the repo into `oidc/` and run `bash create-role-local.sh` instead —
+it derives the repository name from the parent folder.
+
+**What the policy grants.** `permission-policy.json` holds the same nine statements as the
+terraform-managed deploy policy in `infra/oidc.tf` (`TerraformState`, `TerraformStateLock`,
+`CallerIdentity`, `ManageLambda`, `ManageLambdaExecutionRole`, `BootstrapGitHubOIDCProvider`,
+`ManageHttpApi`, `ManageDynamoDbTable`, `ManageCognito`) — nothing like `iam:*`, and no wildcard
+actions. It is scoped to `us-east-1` and to the default resource names (`vpc-provisioning-api-dev`,
+`vpc-provisioning-records`), so changing `aws_region`, `environment`, `project_name` or
+`dynamodb_table_name` means editing the file:
+
+```bash
+# after editing permission-policy.json, re-apply it to the existing role
+curl -s https://raw.githubusercontent.com/rafaelhueb92/oidc-github-actions-role-aws/refs/heads/master/oidc/update-role.sh | bash
+```
+
+**Things to know before running it**
+
+- Don't bootstrap with the script and then let `infra/oidc.tf` create its own resources: terraform
+  would try to create the same OIDC provider and fail with `EntityAlreadyExists`. If you take the
+  script route, import the provider first
+  (`terraform import aws_iam_openid_connect_provider.github arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com`)
+  or drop the OIDC resources from your local apply.
+- The generated trust policy accepts `pull_request` as well as `pull_request_target` subjects, so
+  anyone who can open a pull request against the repository can assume the role — worth reviewing
+  for a public repo.
+- The script builds the `sub` condition from the repository's immutable IDs
+  (`repo:owner@owner-id/repo@repo-id:...`), the format GitHub emits for repositories created on or
+  after 15 July 2026, and for older ones that opted in. `infra/oidc.tf` uses the plain
+  `repo:owner/repo:...` form. If a run fails with
+  `Not authorized to perform sts:AssumeRoleWithWebIdentity`, compare the `sub` recorded in the
+  `AssumeRoleWithWebIdentity` CloudTrail event with the trust policy of the role.
+- `curl | bash` executes whatever is on `master` at the time; pin it to a tag or commit if you want
+  to read the code before it touches your account.
 
 ## 🔑 Get a token
 
@@ -178,5 +272,6 @@ ruff check --fix .      # apply the safe fixes
 
 AWS access uses GitHub OIDC, so no long-lived keys are stored in the repository.
 
-**Repository secrets required:** `AWS_DEPLOY_ROLE_ARN` (role from `infra/oidc.tf`),
-`TF_STATE_BUCKET`, `TF_STATE_LOCK_TABLE`. Optional variable: `TF_STATE_KEY`.
+**Repository secrets required:** `AWS_DEPLOY_ROLE_ARN` (the role created by the
+[bootstrap script](#-deploy-role-github-oidc), or by `infra/oidc.tf`) and `TF_STATE_BUCKET`.
+Optional variable: `TF_STATE_KEY`.

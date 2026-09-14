@@ -7,25 +7,10 @@ resource "null_resource" "build_lambda" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      set -euo pipefail
-      rm -rf "${local.lambda_build_dir}"
-      mkdir -p "${local.lambda_build_dir}"
-
-      python3 -m pip install --quiet --target "${local.lambda_build_dir}" \
-        --platform manylinux2014_x86_64 --implementation cp \
-        --python-version ${local.lambda_python_version} --only-binary=:all: \
-        -r "${local.app_dir}/requirements.txt"
-
-      rsync -a \
-        --exclude 'venv' --exclude 'test' --exclude '.abacusai' \
-        --exclude '__pycache__' --exclude '*.pyc' \
-        "${local.app_dir}/" "${local.lambda_build_dir}/"
-
-      (
-        cd "${local.lambda_build_dir}"
-        rm -f lambda.zip
-        zip -q -r lambda.zip . -x '*__pycache__*' '*.pyc'
-      )
+      bash "${path.module}/../scripts/build_lambda.sh" \
+        --app-dir "${local.app_dir}" \
+        --out-dir "${local.lambda_build_dir}" \
+        --python-version "${local.lambda_python_version}"
     EOT
   }
 }
