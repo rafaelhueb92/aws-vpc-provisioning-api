@@ -103,9 +103,9 @@ jobs:
         if: ${{ !inputs.destroy }}
         run: |
           bash scripts/build_lambda.sh \
-            --app-dir app \
-            --out-dir "${LAMBDA_BUILD_DIR}" \
-            --python-version "${PYTHON_VERSION}"
+            app \
+            "${LAMBDA_BUILD_DIR}" \
+            "${PYTHON_VERSION}"
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+
 set -euo pipefail
 
-app_dir="app"
-out_dir="infra/build"
-python_version="3.12"
+app_dir=$1
+out_dir=$2
+python_version=$3
 platform="manylinux2014_x86_64"
 
 rm -rf "${out_dir}"

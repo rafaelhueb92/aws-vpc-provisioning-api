@@ -8,9 +8,9 @@ resource "null_resource" "build_lambda" {
   provisioner "local-exec" {
     command = <<-EOT
       bash "${path.module}/../scripts/build_lambda.sh" \
-        --app-dir "${local.app_dir}" \
-        --out-dir "${local.lambda_build_dir}" \
-        --python-version "${local.lambda_python_version}"
+        "${local.app_dir}" \
+        "${local.lambda_build_dir}" \
+        "${local.lambda_python_version}"
     EOT
   }
 }
