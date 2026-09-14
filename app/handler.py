@@ -84,15 +84,30 @@ def _route(event:dict) -> dict:
              if method not in ('GET', 'DELETE'):
                  return _response(400, {'message': 'Unsupported method or path'})
 
-             if not vpc_id:
-                 return _response(400, {'message': 'vpc_id path parameter is required'})
-
              if method == 'GET':
-                founded_vpc = storage.list_all(vpc_id)
-                if not founded_vpc:
+                if not vpc_id:
+                    return _response(400, {'message': 'vpc_id path parameter is required'})
+
+                records = storage.list_all(vpc_id)
+                if not records:
                     return _response(404, {'message': f'VPC {vpc_id} not found'})
-                return _response(200, founded_vpc)
+
+                vpc_record = next(
+                    (record for record in records if record['resource_key'] == vpc_id), None
+                )
+                if not vpc_record:
+                    return _response(404, {'message': f'VPC {vpc_id} not found'})
+
+                return _response(200, {
+                    'vpc': vpc_record,
+                    'subnets': [
+                        record for record in records if record['resource_key'] != vpc_id
+                    ],
+                })
              elif method == 'DELETE':
+                  if not vpc_id:
+                      return _response(400, {'message': 'vpc_id path parameter is required'})
+
                   route_table.delete_route_tables(vpc_id)
                   subnet.delete_subnets(vpc_id)
                   vpc.delete_vpc(vpc_id)

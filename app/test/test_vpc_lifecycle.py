@@ -137,8 +137,16 @@ def test_get_returns_the_created_vpc(client):
     response = client.get(f"/vpcs/{created['vpc_id']}", vpc_id=created["vpc_id"])
 
     assert response.status_code == 200
-    assert response.json()["name"] == "integration-vpc"
-    assert response.json()["cidr"] == "10.0.0.0/16"
+    payload = response.json()
+    assert payload["vpc"]["name"] == "integration-vpc"
+    assert payload["vpc"]["cidr"] == "10.0.0.0/16"
+    assert sorted(subnet["resource_key"] for subnet in payload["subnets"]) == sorted(
+        created["subnet_ids"]
+    )
+    assert sorted(subnet["cidr"] for subnet in payload["subnets"]) == [
+        "10.0.1.0/24",
+        "10.0.2.0/24",
+    ]
 
 
 def test_get_unknown_vpc_returns_404(client):

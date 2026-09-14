@@ -268,12 +268,79 @@ def test_get_returns_the_stored_vpc(unit_client, fake_table):
     response = unit_client.get("/vpcs/vpc-1", vpc_id="vpc-1")
 
     assert response.status_code == 200
-    assert response.json()["name"] == "my-vpc"
-    assert response.json()["cidr"] == "10.0.0.0/16"
+    assert response.json()["vpc"]["name"] == "my-vpc"
+    assert response.json()["vpc"]["cidr"] == "10.0.0.0/16"
+
+
+def test_get_returns_the_vpc_with_its_subnets(unit_client, fake_table):
+    fake_table.put_item(
+        Item={"vpc_id": "vpc-1", "resource_key": "vpc-1", "name": "my-vpc"}
+    )
+    fake_table.put_item(
+        Item={
+            "vpc_id": "vpc-1",
+            "resource_key": "subnet-1",
+            "name": "public-1",
+            "cidr": "10.0.1.0/24",
+            "is_public": True,
+        }
+    )
+    fake_table.put_item(
+        Item={
+            "vpc_id": "vpc-1",
+            "resource_key": "subnet-2",
+            "name": "private-1",
+            "cidr": "10.0.2.0/24",
+            "is_public": False,
+        }
+    )
+
+    response = unit_client.get("/vpcs/vpc-1", vpc_id="vpc-1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["vpc"]["resource_key"] == "vpc-1"
+    assert [subnet["resource_key"] for subnet in payload["subnets"]] == [
+        "subnet-1",
+        "subnet-2",
+    ]
+    assert [subnet["is_public"] for subnet in payload["subnets"]] == [True, False]
+
+
+def test_get_returns_an_empty_subnet_list_when_the_vpc_has_none(unit_client, fake_table):
+    fake_table.put_item(Item={"vpc_id": "vpc-1", "resource_key": "vpc-1", "name": "my-vpc"})
+
+    response = unit_client.get("/vpcs/vpc-1", vpc_id="vpc-1")
+
+    assert response.status_code == 200
+    assert response.json()["subnets"] == []
+
+
+def test_get_returns_the_vpc_created_by_post(unit_client):
+    created = unit_client.post("/vpcs", body=VALID_BODY).json()
+
+    response = unit_client.get(f"/vpcs/{created['vpc_id']}", vpc_id=created["vpc_id"])
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["vpc"]["name"] == "my-vpc"
+    assert payload["vpc"]["cidr"] == "10.0.0.0/16"
+    assert sorted(subnet["resource_key"] for subnet in payload["subnets"]) == sorted(
+        created["subnet_ids"]
+    )
 
 
 def test_get_unknown_vpc_returns_404(unit_client):
     response = unit_client.get("/vpcs/vpc-does-not-exist", vpc_id="vpc-does-not-exist")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["message"]
+
+
+def test_get_without_the_vpc_record_returns_404(unit_client, fake_table):
+    fake_table.put_item(Item={"vpc_id": "vpc-1", "resource_key": "subnet-1"})
+
+    response = unit_client.get("/vpcs/vpc-1", vpc_id="vpc-1")
 
     assert response.status_code == 404
     assert "not found" in response.json()["message"]
@@ -292,7 +359,7 @@ def test_get_serializes_dynamodb_numbers(unit_client, fake_table):
     response = unit_client.get("/vpcs/vpc-1", vpc_id="vpc-1")
 
     assert response.status_code == 200
-    assert json.loads(response.body)["subnet_count"] == "3"
+    assert json.loads(response.body)["vpc"]["subnet_count"] == "3"
 
 
 def test_delete_removes_subnets_then_vpc_then_records(unit_client, fake_table):
