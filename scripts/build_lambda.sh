@@ -14,9 +14,10 @@
 
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd "${script_dir}/.." && pwd)"
-
+# Relative paths are resolved against the current working directory, which is
+# what both callers pass: the workflow runs from the repository root (app,
+# infra/build) and the terraform local-exec runs from infra/ (the paths built
+# from path.module, e.g. ./../app and ./build).
 app_dir="app"
 out_dir="infra/build"
 python_version="3.12"
@@ -57,9 +58,10 @@ Options:
   --force                Rebuild even when the package is up to date
   -h, --help             Show this help
 
-Relative paths are resolved against the repository root. The archive is
-written to <out-dir>/lambda.zip and is only rebuilt when the application
-sources, requirements.txt, target version or platform changed.
+Relative paths are resolved against the current working directory (the
+defaults assume it is the repository root). The archive is written to
+<out-dir>/lambda.zip and is only rebuilt when the application sources,
+requirements.txt, target version or platform changed.
 USAGE
 }
 
@@ -80,7 +82,7 @@ done
 resolve_path() {
   case "$1" in
     /*) printf '%s\n' "$1" ;;
-    *) printf '%s\n' "${repo_root}/$1" ;;
+    *) printf '%s\n' "${PWD}/${1#./}" ;;
   esac
 }
 

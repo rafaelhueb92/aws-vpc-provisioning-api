@@ -114,7 +114,8 @@
         "dynamodb:UntagResource",
         "dynamodb:ListTagsOfResource",
         "dynamodb:UpdateTimeToLive",
-        "dynamodb:DescribeTimeToLive"
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:DescribeContinuousBackups"
       ],
       "Resource": "arn:aws:dynamodb:us-east-1:*:table/vpc-provisioning-records"
     },
@@ -133,7 +134,8 @@
         "cognito-idp:ListUserPoolClients",
         "cognito-idp:TagResource",
         "cognito-idp:UntagResource",
-        "cognito-idp:ListTagsForResource"
+        "cognito-idp:ListTagsForResource",
+        "cognito-idp:GetUserPoolMfaConfig"
       ],
       "Resource": "arn:aws:cognito-idp:us-east-1:*:userpool/*"
     }
