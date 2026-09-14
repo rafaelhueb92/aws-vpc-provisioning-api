@@ -1,5 +1,3 @@
-# One file per scheme: the top level key is the securitySchemes entry name,
-# which is what operations reference under `security`.
 CognitoJwtAuthorizer:
   type: oauth2
   flows:

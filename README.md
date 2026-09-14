@@ -5,7 +5,7 @@
 [![Terraform](https://img.shields.io/badge/terraform-%3E%3D%201.5-7B42BC?logo=terraform&logoColor=white)](https://developer.hashicorp.com/terraform)
 [![AWS](https://img.shields.io/badge/AWS-Lambda%20%7C%20API%20Gateway%20%7C%20DynamoDB%20%7C%20Cognito-FF9900?logo=amazonwebservices&logoColor=white)](https://aws.amazon.com/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-46%20passing-brightgreen?logo=pytest&logoColor=white)](#-tests)
+[![Tests](https://img.shields.io/badge/tests-50%20passing-brightgreen?logo=pytest&logoColor=white)](#-tests)
 
 Serverless API that provisions AWS networking on demand: create a VPC with its subnets, get it
 back, delete it. Infrastructure is defined with Terraform, and every request is authenticated
@@ -52,7 +52,8 @@ infra/               Terraform: Lambda, API Gateway, DynamoDB, Cognito
       schemas/       one file per schema
       securitySchemes/  one file per security scheme
 .github/workflows/   CI/CD: ruff + tests, then terraform plan/apply
-cli/                 helper scripts: create-user.sh · generate-token.sh · vpc.md
+cli/                 helper scripts: create-user.sh · generate-token.sh · vpc.md (see Get a token)
+scripts/             build_lambda.sh — builds the Lambda deployment package
 permission-policy.json  IAM permissions for the CI deploy role (see Deploy role)
 ```
 
@@ -86,6 +87,9 @@ terraform init \
 
 terraform apply
 ```
+
+The apply builds the Lambda package itself: `infra/lambda.tf` runs `scripts/build_lambda.sh`
+through a `local-exec`, so the same script CI uses produces the artifact locally.
 
 Then read the outputs:
 
@@ -202,6 +206,27 @@ Three steps, run from the repository root.
 The IdToken is valid for 60 minutes (`id_token_validity` in `infra/cognito.tf`); send it to the API
 as `Authorization: Bearer <token>`.
 
+### 🛠️ Helper scripts
+
+`cli/` holds thin wrappers around the commands above, for when you would rather pass arguments
+than paste them. They take positional arguments and print the result to stdout.
+
+| File                  | Arguments                              | What it does                                                       |
+| --------------------- | -------------------------------------- | ------------------------------------------------------------------ |
+| `cli/create-user.sh`  | `<pool_id> <client_id> <username> <password>` | Creates the user and sets the password as permanent          |
+| `cli/generate-token.sh` | `<client_id> <username> <password>`  | Runs `initiate-auth` and prints the IdToken                        |
+| `cli/vpc.md`          | —                                      | Notes with ad-hoc `aws ec2` commands for inspecting VPCs           |
+
+```bash
+# from the repository root, with POOL_ID and CLIENT_ID from step 1
+bash cli/create-user.sh "$POOL_ID" "$CLIENT_ID" you@example.com 'Passw0rd!'
+TOKEN=$(bash cli/generate-token.sh "$CLIENT_ID" you@example.com 'Passw0rd!')
+```
+
+`create-user.sh` takes the client id but does not use it — the two `cognito-idp` calls it makes
+are scoped to the user pool. The password is passed on the command line, so it lands in your shell
+history; the same is true of the raw `aws` commands above.
+
 ## 🧪 Use the API
 
 ```bash
@@ -265,7 +290,7 @@ DDB_TABLE_NAME=vpc-provisioning-records AWS_REGION=us-east-1 \
 
 ```bash
 cd app
-python -m pytest        # 46 tests: 33 unit (fakes) + 13 lifecycle (moto)
+python -m pytest        # 50 tests: 37 unit (fakes) + 13 lifecycle (moto)
 ```
 
 The suite runs without AWS credentials: `app/test/conftest.py` injects in-memory collaborators,

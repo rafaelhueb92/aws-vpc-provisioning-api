@@ -5,4 +5,4 @@ PASSWORD=$4
 
 aws cognito-idp admin-create-user --user-pool-id "$POOL_ID" --username $USERNAME
 aws cognito-idp admin-set-user-password --user-pool-id "$POOL_ID" \
-  --username you@example.com --password $PASSWORD --permanent
+  --username $USERNAME --password $PASSWORD --permanent
