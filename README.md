@@ -43,7 +43,7 @@ app/                 Lambda application (Python 3.12)
   models/            request validation (pydantic)
   services/          vpc.py · subnet.py · route_table.py · storage.py  (boto3)
   test/              pytest suite + fixtures
-infra/               Terraform: Lambda, API Gateway, DynamoDB, Cognito, OIDC
+infra/               Terraform: Lambda, API Gateway, DynamoDB, Cognito
   apigateway.tf      imports the assembled OpenAPI document as the API body
   openapi/           OpenAPI 3.0 spec, split by concern
     api.yaml         root document: openapi version + info
@@ -53,7 +53,6 @@ infra/               Terraform: Lambda, API Gateway, DynamoDB, Cognito, OIDC
       securitySchemes/  one file per security scheme
 .github/workflows/   CI/CD: ruff + tests, then terraform plan/apply
 cli/                 helper scripts: create-user.sh · generate-token.sh · vpc.md
-insomnia/            Insomnia collection with the API requests (git-ignored)
 permission-policy.json  IAM permissions for the CI deploy role (see Deploy role)
 ```
 
@@ -103,22 +102,17 @@ the user and exchanges it for the IdToken, then [Use the API](#-use-the-api) sho
 Useful variables: `aws_region` (default `us-east-1`), `environment` (default `dev`),
 `dynamodb_table_name` (default `vpc-provisioning-records`).
 
-> The first apply must be run locally with admin credentials: it creates the GitHub OIDC
-> provider and the deploy role that CI assumes afterwards. If you would rather not run the admin
-> apply, create the deploy role first with the bootstrap script — see
-> [Deploy role (GitHub OIDC)](#-deploy-role-github-oidc).
+> CI authenticates with the deploy role described in
+> [Deploy role (GitHub OIDC)](#-deploy-role-github-oidc) — terraform does not create it, so
+> bootstrap it first. The apply itself is best run locally with credentials that can create the
+> Lambda, its IAM role and the rest of the stack.
 
 ## 🔐 Deploy role (GitHub OIDC)
 
 CI assumes an IAM role through GitHub OIDC, so no AWS access keys are stored in the repository.
-The role can be created either way, but **pick one** — the two approaches are not meant to be
-combined:
-
-|                                    | [`oidc-github-actions-role-aws`](https://github.com/rafaelhueb92/oidc-github-actions-role-aws) | `infra/oidc.tf`                        |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------- |
-| Creates                            | OIDC provider (if missing) + role `GitHubActionsRole-aws-vpc-provisioning-api`                  | OIDC provider + role `vpc-provisioning-api-dev-github-actions-role` |
-| Permissions                        | `permission-policy.json` from this repo                                                         | the same statements, inline in `oidc.tf` |
-| Runs before                          | the first `terraform apply`                                                                     | during a local `terraform apply` with admin credentials |
+The role is created by the bootstrap script below (from
+[`oidc-github-actions-role-aws`](https://github.com/rafaelhueb92/oidc-github-actions-role-aws)),
+using `permission-policy.json` from this repository as its inline policy.
 
 ### Bootstrap with the script
 
@@ -148,13 +142,12 @@ the workflow deploys without a single long-lived key. Prefer keeping the
 script inside the project? Clone the repo into `oidc/` and run `bash create-role-local.sh` instead —
 it derives the repository name from the parent folder.
 
-**What the policy grants.** `permission-policy.json` holds the same nine statements as the
-terraform-managed deploy policy in `infra/oidc.tf` (`TerraformState`, `TerraformStateLock`,
-`CallerIdentity`, `ManageLambda`, `ManageLambdaExecutionRole`, `BootstrapGitHubOIDCProvider`,
-`ManageHttpApi`, `ManageDynamoDbTable`, `ManageCognito`) — nothing like `iam:*`, and no wildcard
-actions. It is scoped to `us-east-1` and to the default resource names (`vpc-provisioning-api-dev`,
-`vpc-provisioning-records`), so changing `aws_region`, `environment`, `project_name` or
-`dynamodb_table_name` means editing the file:
+**What the policy grants.** `permission-policy.json` holds nine statements (`TerraformState`,
+`TerraformStateLock`, `CallerIdentity`, `ManageLambda`, `ManageLambdaExecutionRole`,
+`BootstrapGitHubOIDCProvider`, `ManageHttpApi`, `ManageDynamoDbTable`, `ManageCognito`) — nothing
+like `iam:*`, and no wildcard actions. It is scoped to `us-east-1` and to the default resource
+names (`vpc-provisioning-api-dev`, `vpc-provisioning-records`), so changing `aws_region`,
+`environment`, `project_name` or `dynamodb_table_name` means editing the file:
 
 ```bash
 # after editing permission-policy.json, re-apply it to the existing role
@@ -163,18 +156,12 @@ curl -s https://raw.githubusercontent.com/rafaelhueb92/oidc-github-actions-role-
 
 **Things to know before running it**
 
-- Don't bootstrap with the script and then let `infra/oidc.tf` create its own resources: terraform
-  would try to create the same OIDC provider and fail with `EntityAlreadyExists`. If you take the
-  script route, import the provider first
-  (`terraform import aws_iam_openid_connect_provider.github arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com`)
-  or drop the OIDC resources from your local apply.
 - The generated trust policy accepts `pull_request` as well as `pull_request_target` subjects, so
   anyone who can open a pull request against the repository can assume the role — worth reviewing
   for a public repo.
 - The script builds the `sub` condition from the repository's immutable IDs
   (`repo:owner@owner-id/repo@repo-id:...`), the format GitHub emits for repositories created on or
-  after 15 July 2026, and for older ones that opted in. `infra/oidc.tf` uses the plain
-  `repo:owner/repo:...` form. If a run fails with
+  after 15 July 2026, and for older ones that opted in. If a run fails with
   `Not authorized to perform sts:AssumeRoleWithWebIdentity`, compare the `sub` recorded in the
   `AssumeRoleWithWebIdentity` CloudTrail event with the trust policy of the role.
 - `curl | bash` executes whatever is on `master` at the time; pin it to a tag or commit if you want
@@ -248,27 +235,6 @@ curl -X DELETE "$API/vpcs/vpc-0123..." -H "Authorization: Bearer $TOKEN"
 The subnets are validated before any AWS call: each CIDR must sit inside the VPC CIDR, and
 subnet CIDRs cannot overlap. Bad input returns `400`; an unknown VPC returns `404`.
 
-### 🛏️ Insomnia collection
-
-`insomnia/Insomnia_2026-09-14.yaml` is an Insomnia v5 collection with the four requests above
-(`health`, `create-vpc`, `get-vpc`, `delete-vpc`). Import it with **Application → Preferences →
-Data → Import Data → From File**, or from the CLI:
-
-```bash
-insomnia import insomnia/Insomnia_2026-09-14.yaml
-```
-
-It ships with a Base Environment holding two variables, so nothing is hardcoded in the requests:
-
-| Variable        | Example                                                          |
-| --------------- | ---------------------------------------------------------------- |
-| `base_url`      | `https://xxxxxxxx.execute-api.us-east-1.amazonaws.com`            |
-| `authorization` | the IdToken from [Get a token](#-get-a-token), without `Bearer `  |
-
-`create-vpc`, `get-vpc` and `delete-vpc` send it as a Bearer token; `health` needs no auth. The
-`get-vpc` and `delete-vpc` URLs carry a placeholder `vpc_id` — replace it with the id returned by
-`create-vpc`. The folder is git-ignored, since the exported environment can hold a live token.
-
 ## 💻 Local development
 
 ```bash
@@ -320,5 +286,5 @@ ruff check --fix .      # apply the safe fixes
 AWS access uses GitHub OIDC, so no long-lived keys are stored in the repository.
 
 **Repository secrets required:** `AWS_DEPLOY_ROLE_ARN` (the role created by the
-[bootstrap script](#-deploy-role-github-oidc), or by `infra/oidc.tf`) and `TF_STATE_BUCKET`.
+[bootstrap script](#-deploy-role-github-oidc)) and `TF_STATE_BUCKET`.
 Optional variable: `TF_STATE_KEY`.
