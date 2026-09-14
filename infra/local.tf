@@ -32,11 +32,6 @@ locals {
   cognito_client_id = aws_cognito_user_pool_client.this.id
 }
 
-# The OpenAPI document imported by API Gateway is assembled from infra/openapi:
-# api.yaml holds the metadata, one file per path lives in paths/ and one file per
-# schema or security scheme lives in components/. Fragments have no fixed name
-# contract, the key inside the file is what ends up in the document, so a new
-# path or schema only means a new file.
 locals {
   openapi_template_vars = {
     lambda_invoke_uri = local.lambda_invoke_uri

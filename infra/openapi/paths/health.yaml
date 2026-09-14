@@ -18,6 +18,6 @@
                   type: boolean
     x-amazon-apigateway-integration:
       type: aws_proxy
-      httpMethod: POST
+      httpMethod: GET
       payloadFormatVersion: "1.0"
       uri: ${lambda_invoke_uri}
