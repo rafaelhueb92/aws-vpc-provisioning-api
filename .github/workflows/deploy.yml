@@ -38,7 +38,7 @@ jobs:
   test:
     name: lint and unit tests
     runs-on: ubuntu-latest
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.destroy != 'true'
+    if: ${{ !inputs.destroy  }}
 
     steps:
       - name: Checkout
@@ -67,9 +67,10 @@ jobs:
         run: python -m pytest -v
 
   terraform:
-    name: ${{ inputs.destroy && 'destroy' || 'apply' }}
+    name: ${{ inputs.destroy && 'destroy' || 'apply'}}
     runs-on: ubuntu-latest
     needs: test
+    if: ${{ !failure() && !cancelled() }}
 
     defaults:
       run:
