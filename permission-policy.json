@@ -68,7 +68,8 @@
         "iam:TagRole",
         "iam:UntagRole",
         "iam:ListRoleTags",
-        "iam:PassRole"
+        "iam:PassRole",
+        "iam:ListInstanceProfilesForRole"
       ],
       "Resource": "arn:aws:iam::*:role/vpc-provisioning-api-dev-*"
     },
