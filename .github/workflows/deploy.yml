@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - "**/*.md"
       - "permission-policy.json"
+      - deploy.yml
   pull_request:
     branches: [main, master]
     paths-ignore:
@@ -32,7 +33,7 @@ env:
 
 concurrency:
   group: terraform-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -88,11 +89,13 @@ jobs:
 
       - name: Set up Python
         uses: actions/setup-python@v5
+        if: ${{ !inputs.destroy }}
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Build Lambda deployment package
         working-directory: ${{ github.workspace }}
+        if: ${{ !inputs.destroy }}
         run: |
           bash scripts/build_lambda.sh \
             --app-dir app \
@@ -124,7 +127,7 @@ jobs:
         run: terraform plan -input=false -no-color -out=tfplan
 
       - name: Terraform apply
-        if: ${{ !inputs.destroy && github.event_name == 'push' }}
+        if: ${{ !inputs.destroy }}
         run: terraform apply -input=false -auto-approve tfplan
 
       - name: Terraform destroy
@@ -132,5 +135,5 @@ jobs:
         run: terraform destroy -input=false -no-color -auto-approve
 
       - name: Terraform Ouptut
-        if: ${{ !inputs.destroy && github.event_name == 'push' }}
+        if: ${{ !inputs.destroy }}
         run: terraform output
