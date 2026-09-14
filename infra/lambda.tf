@@ -1,20 +1,3 @@
-resource "null_resource" "build_lambda" {
-  triggers = {
-    requirements = filemd5("${local.app_dir}/requirements.txt")
-    source       = local.app_source_hash
-    runtime      = var.lambda_runtime
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      bash "${path.module}/../scripts/build_lambda.sh" \
-        "${local.app_dir}" \
-        "${local.lambda_build_dir}" \
-        "${local.lambda_python_version}"
-    EOT
-  }
-}
-
 data "aws_iam_policy_document" "lambda_assume_role" {
   statement {
     sid     = "LambdaAssumeRole"
@@ -111,7 +94,7 @@ resource "aws_lambda_function" "this" {
 
   filename = local.lambda_zip_path
 
-  source_code_hash = fileexists(local.lambda_zip_path) ? filebase64sha256(local.lambda_zip_path) : null
+  source_code_hash = data.archive_file.lambda.output_base64sha256
 
   memory_size = var.lambda_memory_size
   timeout     = var.lambda_timeout
