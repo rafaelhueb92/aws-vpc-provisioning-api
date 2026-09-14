@@ -88,7 +88,7 @@ def _route(event:dict) -> dict:
                  return _response(400, {'message': 'vpc_id path parameter is required'})
 
              if method == 'GET':
-                founded_vpc = storage.get_by_id(vpc_id)
+                founded_vpc = storage.list_all(vpc_id)
                 if not founded_vpc:
                     return _response(404, {'message': f'VPC {vpc_id} not found'})
                 return _response(200, founded_vpc)

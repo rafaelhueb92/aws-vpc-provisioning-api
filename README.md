@@ -52,6 +52,8 @@ infra/               Terraform: Lambda, API Gateway, DynamoDB, Cognito, OIDC
       schemas/       one file per schema
       securitySchemes/  one file per security scheme
 .github/workflows/   CI/CD: ruff + tests, then terraform plan/apply
+cli/                 helper scripts: create-user.sh · generate-token.sh · vpc.md
+insomnia/            Insomnia collection with the API requests (git-ignored)
 permission-policy.json  IAM permissions for the CI deploy role (see Deploy role)
 ```
 
@@ -245,6 +247,27 @@ curl -X DELETE "$API/vpcs/vpc-0123..." -H "Authorization: Bearer $TOKEN"
 
 The subnets are validated before any AWS call: each CIDR must sit inside the VPC CIDR, and
 subnet CIDRs cannot overlap. Bad input returns `400`; an unknown VPC returns `404`.
+
+### 🛏️ Insomnia collection
+
+`insomnia/Insomnia_2026-09-14.yaml` is an Insomnia v5 collection with the four requests above
+(`health`, `create-vpc`, `get-vpc`, `delete-vpc`). Import it with **Application → Preferences →
+Data → Import Data → From File**, or from the CLI:
+
+```bash
+insomnia import insomnia/Insomnia_2026-09-14.yaml
+```
+
+It ships with a Base Environment holding two variables, so nothing is hardcoded in the requests:
+
+| Variable        | Example                                                          |
+| --------------- | ---------------------------------------------------------------- |
+| `base_url`      | `https://xxxxxxxx.execute-api.us-east-1.amazonaws.com`            |
+| `authorization` | the IdToken from [Get a token](#-get-a-token), without `Bearer `  |
+
+`create-vpc`, `get-vpc` and `delete-vpc` send it as a Bearer token; `health` needs no auth. The
+`get-vpc` and `delete-vpc` URLs carry a placeholder `vpc_id` — replace it with the id returned by
+`create-vpc`. The folder is git-ignored, since the exported environment can hold a live token.
 
 ## 💻 Local development
 

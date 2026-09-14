@@ -8,11 +8,14 @@ on:
       - "permission-policy.json"
       - deploy.yml
       - "cli/**"
+      - "insomnia/**"
   pull_request:
     branches: [main, master]
     paths-ignore:
       - "**/*.md"
       - "permission-policy.json"
+      - "cli/**"
+      - "insomnia/**"
   workflow_dispatch:
     inputs:
       destroy:

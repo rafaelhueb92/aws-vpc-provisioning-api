@@ -18,6 +18,9 @@ infra/build/
 
 .DS_Store
 .env
+
+# local request collections (may hold tokens)
+insomnia/
 .vscode/
 .idea/
 
