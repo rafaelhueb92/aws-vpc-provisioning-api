@@ -10,5 +10,9 @@ data "archive_file" "lambda" {
     "*.pyc",
     ".pytest_cache",
     "tests",
+    "test",
+    "pytest.ini",
+    ".ruff_cache",
+    ".abacusai"
   ]
 }
