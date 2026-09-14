@@ -14,6 +14,7 @@ class Settings:
     vpc_waiter_max_attempts: int = 12
     vpc_waiter_enabled: bool = True
     subnet_max_workers: int = 5
+    route_table_max_workers: int = 5
     subnet_map_public_ip: bool = True
     subnet_waiter_delay: int = 5
     subnet_waiter_max_attempts: int = 12
@@ -35,6 +36,9 @@ class Settings:
                 in ("1", "true", "yes", "on")
             ),
             subnet_max_workers=int(os.getenv("SUBNET_MAX_WORKERS", cls.subnet_max_workers)),
+            route_table_max_workers=int(
+                os.getenv("ROUTE_TABLE_MAX_WORKERS", cls.route_table_max_workers)
+            ),
             subnet_map_public_ip=(
                 str(os.getenv("SUBNET_MAP_PUBLIC_IP", cls.subnet_map_public_ip)).lower()
                 in ("1", "true", "yes", "on")

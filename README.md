@@ -5,7 +5,7 @@
 [![Terraform](https://img.shields.io/badge/terraform-%3E%3D%201.5-7B42BC?logo=terraform&logoColor=white)](https://developer.hashicorp.com/terraform)
 [![AWS](https://img.shields.io/badge/AWS-Lambda%20%7C%20API%20Gateway%20%7C%20DynamoDB%20%7C%20Cognito-FF9900?logo=amazonwebservices&logoColor=white)](https://aws.amazon.com/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-34%20passing-brightgreen?logo=pytest&logoColor=white)](#-tests)
+[![Tests](https://img.shields.io/badge/tests-46%20passing-brightgreen?logo=pytest&logoColor=white)](#-tests)
 
 Serverless API that provisions AWS networking on demand: create a VPC with its subnets, get it
 back, delete it. Infrastructure is defined with Terraform, and every request is authenticated
@@ -19,19 +19,20 @@ A request hits **API Gateway** with a Bearer JWT, which **Cognito** validates. T
 then either talks to **EC2** to provision the networking resources, or reads and writes the VPC
 records in **DynamoDB**.
 
-> The diagram shows the target AWS topology. Today the API provisions the **VPC** and its
-> **subnets** (with public IP mapping on the public ones). The service layer can also attach an
-> **internet gateway** (`vpc.create_igw_if_public_subnet(...)`) and `DELETE` cleans one up if it
-> exists, but the `POST` flow does not call it yet. Route tables are not created yet.
+> The diagram shows what the API provisions: the **VPC**, its **subnets** (with public IP mapping
+> on the public ones), an **internet gateway** when there is at least one public subnet, and one
+> **route table per subnet type** — the public one routes `0.0.0.0/0` to the internet gateway,
+> the private one keeps only the local route. `DELETE` removes the route tables, the subnets, any
+> attached internet gateway, the VPC and the stored records.
 
 ## 🚏 Routes
 
-| Method   | Path             | Auth   | What it does                                                                       |
-| -------- | ---------------- | ------ | ---------------------------------------------------------------------------------- |
-| `POST`   | `/vpcs`          | JWT    | Creates the VPC and its subnets, then stores the records                           |
-| `GET`    | `/vpcs/{vpc_id}` | JWT    | Returns the stored VPC                                                             |
-| `DELETE` | `/vpcs/{vpc_id}` | JWT    | Deletes the subnets, any attached internet gateway, the VPC and the stored records |
-| `GET`    | `/health`        | public | Liveness probe                                                                     |
+| Method   | Path             | Auth   | What it does                                                                              |
+| -------- | ---------------- | ------ | ----------------------------------------------------------------------------------------- |
+| `POST`   | `/vpcs`          | JWT    | Creates the VPC, its subnets, the internet gateway and the route tables, then stores them |
+| `GET`    | `/vpcs/{vpc_id}` | JWT    | Returns the stored VPC                                                                    |
+| `DELETE` | `/vpcs/{vpc_id}` | JWT    | Deletes the route tables, the subnets, any attached internet gateway and the VPC          |
+| `GET`    | `/health`        | public | Liveness probe                                                                            |
 
 ## 📁 Project layout
 
@@ -40,7 +41,7 @@ app/                 Lambda application (Python 3.12)
   handler.py         entrypoint: handler.lambda_handler
   config/            settings read from environment variables
   models/            request validation (pydantic)
-  services/          vpc.py · subnet.py · storage.py  (boto3)
+  services/          vpc.py · subnet.py · route_table.py · storage.py  (boto3)
   test/              pytest suite + fixtures
 infra/               Terraform: Lambda, API Gateway, DynamoDB, Cognito, OIDC
   apigateway.tf      imports the assembled OpenAPI document as the API body
@@ -238,7 +239,7 @@ curl -X POST "$API/vpcs" \
 # get it back
 curl "$API/vpcs/vpc-0123..." -H "Authorization: Bearer $TOKEN"
 
-# delete it (removes the subnets and any attached internet gateway)
+# delete it (removes the route tables, the subnets and any attached internet gateway)
 curl -X DELETE "$API/vpcs/vpc-0123..." -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -269,12 +270,13 @@ DDB_TABLE_NAME=vpc-provisioning-records AWS_REGION=us-east-1 \
 | `AWS_ENDPOINT_URL`                                                                                   | no       | —                         | Point boto3 at LocalStack or moto instead of AWS     |
 | `VPC_WAITER_DELAY` · `VPC_WAITER_MAX_ATTEMPTS` · `VPC_WAITER_ENABLED`                                | no       | `5` · `12` · `true`       | EC2 waiter tuning for VPC creation                   |
 | `SUBNET_WAITER_DELAY` · `SUBNET_WAITER_MAX_ATTEMPTS` · `SUBNET_MAP_PUBLIC_IP` · `SUBNET_MAX_WORKERS` | no       | `5` · `12` · `true` · `5` | Subnet waiter, public IP and thread pool tuning      |
+| `ROUTE_TABLE_MAX_WORKERS`                                                                            | no       | `5`                       | Route table thread pool tuning                       |
 
 ## ✅ Tests
 
 ```bash
 cd app
-python -m pytest        # 34 tests: 25 unit (fakes) + 9 lifecycle (moto)
+python -m pytest        # 46 tests: 33 unit (fakes) + 13 lifecycle (moto)
 ```
 
 The suite runs without AWS credentials: `app/test/conftest.py` injects in-memory collaborators,

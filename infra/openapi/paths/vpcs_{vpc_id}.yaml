@@ -42,7 +42,7 @@
           type: string
     responses:
       "200":
-        description: The VPC, its subnets, its internet gateway and the stored records were deleted.
+        description: The VPC, its route tables, its subnets, its internet gateway and the stored records were deleted.
       "404":
         description: No VPC with that id exists.
     x-amazon-apigateway-integration:

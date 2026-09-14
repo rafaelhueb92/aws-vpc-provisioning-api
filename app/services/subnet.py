@@ -10,6 +10,7 @@ class Subnet:
         settings = get_settings()
         self.subnet_client = client
         self.map_public_ip = settings.subnet_map_public_ip
+        self.max_workers = settings.subnet_max_workers
         self.waiter_config = {
             "Delay": settings.subnet_waiter_delay,
             "MaxAttempts": settings.subnet_waiter_max_attempts,
@@ -58,7 +59,7 @@ class Subnet:
         if not subnet_props_list:
             return []
 
-        with ThreadPoolExecutor(max_workers=len(subnet_props_list)) as pool:
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             return list(
                 pool.map(lambda props: self.create_subnet(vpc_id, props), subnet_props_list)
             )
@@ -78,9 +79,14 @@ class Subnet:
         ]
 
     def delete_subnets(self, vpc_id: str) -> list[str]:
-        deleted = []
-        for subnet in self.get_subnets(vpc_id):
-            self.subnet_client.delete_subnet(SubnetId=subnet["subnet_id"])
-            self.logger.info("Deleted subnet %s", subnet["subnet_id"])
-            deleted.append(subnet["subnet_id"])
-        return deleted
+        subnets = self.get_subnets(vpc_id)
+        if not subnets:
+            return []
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+            return list(pool.map(self._delete_subnet, subnets))
+
+    def _delete_subnet(self, subnet: dict) -> str:
+        self.subnet_client.delete_subnet(SubnetId=subnet["subnet_id"])
+        self.logger.info("Deleted subnet %s", subnet["subnet_id"])
+        return subnet["subnet_id"]

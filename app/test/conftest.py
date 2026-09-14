@@ -45,11 +45,11 @@ def records_table(aws) -> Generator[Any, None, None]:
         TableName=TEST_TABLE_NAME,
         KeySchema=[
             {"AttributeName": "vpc_id", "KeyType": "HASH"},
-            {"AttributeName": "sort_key", "KeyType": "RANGE"},
+            {"AttributeName": "resource_key", "KeyType": "RANGE"},
         ],
         AttributeDefinitions=[
             {"AttributeName": "vpc_id", "AttributeType": "S"},
-            {"AttributeName": "sort_key", "AttributeType": "S"},
+            {"AttributeName": "resource_key", "AttributeType": "S"},
         ],
         BillingMode="PAY_PER_REQUEST",
     )
@@ -65,7 +65,7 @@ def lambda_module(aws):
 
 def _truncate(table) -> None:
     keys = [
-        {"vpc_id": item["vpc_id"], "sort_key": item["sort_key"]}
+        {"vpc_id": item["vpc_id"], "resource_key": item["resource_key"]}
         for item in table.scan()["Items"]
     ]
     with table.batch_writer() as batch:
@@ -89,6 +89,7 @@ class FakeEc2Client:
         self.vpcs: dict[str, dict] = {}
         self.subnets: dict[str, dict] = {}
         self.internet_gateways: dict[str, str] = {}
+        self.route_tables: dict[str, dict] = {}
         self._ids = itertools.count(1)
         self._errors: dict[str, Exception] = {}
 
@@ -138,6 +139,8 @@ class FakeEc2Client:
                 self.vpcs[resource_id]["Tags"] = Tags
             elif resource_id in self.subnets:
                 self.subnets[resource_id]["Tags"] = Tags
+            elif resource_id in self.route_tables:
+                self.route_tables[resource_id]["Tags"] = Tags
         return {}
 
     def create_subnet(self, VpcId: str, CidrBlock: str, AvailabilityZone: str) -> dict:
@@ -219,6 +222,99 @@ class FakeEc2Client:
             ]
         }
 
+    def create_route_table(self, VpcId: str) -> dict:
+        self.record("create_route_table", VpcId=VpcId)
+        self._maybe_raise("create_route_table")
+        route_table_id = f"rtb-{next(self._ids):08d}"
+        self.route_tables[route_table_id] = {
+            "RouteTableId": route_table_id,
+            "VpcId": VpcId,
+            "Routes": [],
+            "Associations": [],
+            "Tags": [],
+        }
+        return {"RouteTable": self.route_tables[route_table_id]}
+
+    def create_route(
+        self, RouteTableId: str, DestinationCidrBlock: str, GatewayId: str
+    ) -> dict:
+        self.record(
+            "create_route",
+            RouteTableId=RouteTableId,
+            DestinationCidrBlock=DestinationCidrBlock,
+            GatewayId=GatewayId,
+        )
+        self._maybe_raise("create_route")
+        self.route_tables[RouteTableId]["Routes"].append(
+            {
+                "DestinationCidrBlock": DestinationCidrBlock,
+                "GatewayId": GatewayId,
+                "State": "active",
+            }
+        )
+        return {"Return": True}
+
+    def associate_route_table(self, RouteTableId: str, SubnetId: str) -> dict:
+        self.record("associate_route_table", RouteTableId=RouteTableId, SubnetId=SubnetId)
+        self._maybe_raise("associate_route_table")
+        association_id = f"rtbassoc-{next(self._ids):08d}"
+        self.route_tables[RouteTableId]["Associations"].append(
+            {"RouteTableAssociationId": association_id, "SubnetId": SubnetId, "Main": False}
+        )
+        return {"AssociationId": association_id}
+
+    def disassociate_route_table(self, AssociationId: str) -> dict:
+        self.record("disassociate_route_table", AssociationId=AssociationId)
+        self._maybe_raise("disassociate_route_table")
+        for table in self.route_tables.values():
+            table["Associations"] = [
+                association
+                for association in table["Associations"]
+                if association["RouteTableAssociationId"] != AssociationId
+            ]
+        return {}
+
+    def delete_route_table(self, RouteTableId: str) -> dict:
+        self.record("delete_route_table", RouteTableId=RouteTableId)
+        self._maybe_raise("delete_route_table")
+        self.route_tables.pop(RouteTableId, None)
+        return {}
+
+    def describe_route_tables(self, Filters: Optional[list] = None) -> dict:
+        self.record("describe_route_tables", Filters=Filters)
+        self._maybe_raise("describe_route_tables")
+        vpc_id = None
+        for query_filter in Filters or []:
+            if query_filter.get("Name") == "vpc-id":
+                vpc_id = query_filter["Values"][0]
+        return {
+            "RouteTables": [
+                table
+                for table in self.route_tables.values()
+                if vpc_id is None or table["VpcId"] == vpc_id
+            ]
+        }
+
+
+class FakeBatchWriter:
+
+    def __init__(self, table: "FakeTable") -> None:
+        self.table = table
+
+    def __enter__(self) -> "FakeBatchWriter":
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        return None
+
+    def put_item(self, Item: dict, **kwargs) -> None:
+        self.table.calls.append(("batch_put_item", Item["vpc_id"], Item["resource_key"]))
+        self.table.store(Item)
+
+    def delete_item(self, Key: dict, **kwargs) -> None:
+        self.table.calls.append(("batch_delete_item", Key["vpc_id"], Key["resource_key"]))
+        self.table.remove(Key)
+
 
 class FakeTable:
 
@@ -226,19 +322,31 @@ class FakeTable:
         self.items: dict[tuple, dict] = {}
         self.calls: list[tuple] = []
 
+    def store(self, item: dict) -> None:
+        self.items[(item["vpc_id"], item["resource_key"])] = item
+
+    def remove(self, key: dict) -> None:
+        self.items.pop((key["vpc_id"], key["resource_key"]), None)
+
+    def calls_of(self, name: str) -> list[tuple]:
+        return [call for call in self.calls if call[0] == name]
+
+    def batch_writer(self, **kwargs) -> FakeBatchWriter:
+        return FakeBatchWriter(self)
+
     def put_item(self, Item: dict, **kwargs) -> dict:
-        self.calls.append(("put_item", Item["vpc_id"], Item["sort_key"]))
-        self.items[(Item["vpc_id"], Item["sort_key"])] = Item
+        self.calls.append(("put_item", Item["vpc_id"], Item["resource_key"]))
+        self.store(Item)
         return {}
 
     def get_item(self, Key: dict, **kwargs) -> dict:
-        self.calls.append(("get_item", Key["vpc_id"], Key["sort_key"]))
-        item = self.items.get((Key["vpc_id"], Key["sort_key"]))
+        self.calls.append(("get_item", Key["vpc_id"], Key["resource_key"]))
+        item = self.items.get((Key["vpc_id"], Key["resource_key"]))
         return {"Item": item} if item is not None else {}
 
     def delete_item(self, Key: dict, **kwargs) -> dict:
-        self.calls.append(("delete_item", Key["vpc_id"], Key["sort_key"]))
-        self.items.pop((Key["vpc_id"], Key["sort_key"]), None)
+        self.calls.append(("delete_item", Key["vpc_id"], Key["resource_key"]))
+        self.remove(Key)
         return {}
 
     def query(self, KeyConditionExpression, **kwargs) -> dict:
@@ -341,11 +449,13 @@ def client(lambda_module, records_table) -> Generator[ApiGatewayClient, None, No
 
 @pytest.fixture()
 def unit_client(lambda_module, monkeypatch, fake_ec2, fake_table, logger) -> ApiGatewayClient:
+    from services.route_table import RouteTable
     from services.storage import Storage
     from services.subnet import Subnet
     from services.vpc import VPC
 
     monkeypatch.setattr(lambda_module, "vpc", VPC(fake_ec2, logger))
     monkeypatch.setattr(lambda_module, "subnet", Subnet(fake_ec2, logger))
+    monkeypatch.setattr(lambda_module, "route_table", RouteTable(fake_ec2, logger))
     monkeypatch.setattr(lambda_module, "storage", Storage(fake_table, TEST_TABLE_NAME))
     return ApiGatewayClient(lambda_module)

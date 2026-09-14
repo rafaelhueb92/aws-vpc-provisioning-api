@@ -67,6 +67,12 @@ data "aws_iam_policy_document" "lambda" {
       "ec2:DetachInternetGateway",
       "ec2:DeleteInternetGateway",
       "ec2:DescribeInternetGateways",
+      "ec2:CreateRouteTable",
+      "ec2:DeleteRouteTable",
+      "ec2:DescribeRouteTables",
+      "ec2:CreateRoute",
+      "ec2:AssociateRouteTable",
+      "ec2:DisassociateRouteTable",
     ]
 
     resources = ["*"]
@@ -81,6 +87,7 @@ data "aws_iam_policy_document" "lambda" {
       "dynamodb:GetItem",
       "dynamodb:Query",
       "dynamodb:DeleteItem",
+      "dynamodb:BatchWriteItem",
     ]
 
     resources = [aws_dynamodb_table.vpcs.arn]
@@ -96,7 +103,7 @@ resource "aws_iam_role_policy" "lambda" {
 
 resource "aws_lambda_function" "this" {
   function_name = local.name_prefix
-  description   = "Provision VPCs, subnets and internet gateways on demand"
+  description   = "Provision VPCs, subnets, internet gateways and route tables on demand"
   role          = aws_iam_role.lambda.arn
 
   runtime = var.lambda_runtime

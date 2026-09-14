@@ -1,7 +1,7 @@
 "/vpcs":
   post:
     operationId: createVpc
-    summary: Create a VPC with its subnets
+    summary: Create a VPC with its subnets, internet gateway and route tables
     tags: [Vpcs]
     security:
       - CognitoJwtAuthorizer: []
@@ -13,7 +13,7 @@
             $ref: "#/components/schemas/CreateVpcRequest"
     responses:
       "200":
-        description: The VPC was created.
+        description: The VPC, its subnets, the internet gateway and the route tables were created.
         content:
           application/json:
             schema:

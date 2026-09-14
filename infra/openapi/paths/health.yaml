@@ -1,5 +1,3 @@
-# One file per path: the top level key is the OpenAPI path itself, then its
-# operations. Assembled into the imported document by infra/local.tf.
 "/health":
   get:
     operationId: health

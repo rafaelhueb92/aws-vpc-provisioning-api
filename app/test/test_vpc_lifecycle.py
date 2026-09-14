@@ -27,6 +27,16 @@ def ec2():
     return boto3.client("ec2", region_name="us-east-1")
 
 
+def route_tables_by_name(ec2, vpc_id: str) -> dict:
+    response = ec2.describe_route_tables(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
+    return {
+        next(
+            (tag["Value"] for tag in table.get("Tags", []) if tag["Key"] == "Name"), None
+        ): table
+        for table in response["RouteTables"]
+    }
+
+
 def test_lambda_uses_the_configured_table(lambda_module):
     assert lambda_module.settings.vpc_table == TEST_TABLE_NAME
     assert lambda_module.storage.table_name == TEST_TABLE_NAME
@@ -54,6 +64,58 @@ def test_post_creates_a_real_vpc_and_subnets(client, ec2):
     assert public_flags == {"10.0.1.0/24": True, "10.0.2.0/24": False}
 
 
+def test_post_creates_a_route_table_per_subnet_type(client, ec2):
+    vpc_id = client.post("/vpcs", body=BODY).json()["vpc_id"]
+
+    tables = route_tables_by_name(ec2, vpc_id)
+
+    assert "integration-vpc-public-rt" in tables
+    assert "integration-vpc-private-rt" in tables
+    assert tables["integration-vpc-public-rt"]["RouteTableId"] != tables[
+        "integration-vpc-private-rt"
+    ]["RouteTableId"]
+
+
+def test_post_routes_the_public_route_table_to_the_internet_gateway(client, ec2):
+    vpc_id = client.post("/vpcs", body=BODY).json()["vpc_id"]
+
+    gateways = ec2.describe_internet_gateways(
+        Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
+    )["InternetGateways"]
+    assert len(gateways) == 1
+    igw_id = gateways[0]["InternetGatewayId"]
+
+    tables = route_tables_by_name(ec2, vpc_id)
+    public_routes = tables["integration-vpc-public-rt"]["Routes"]
+    private_routes = tables["integration-vpc-private-rt"]["Routes"]
+
+    assert any(
+        route["DestinationCidrBlock"] == "0.0.0.0/0" and route.get("GatewayId") == igw_id
+        for route in public_routes
+    )
+    assert not any(
+        route["DestinationCidrBlock"] == "0.0.0.0/0" for route in private_routes
+    )
+
+
+def test_post_associates_each_subnet_with_its_route_table(client, ec2):
+    vpc_id = client.post("/vpcs", body=BODY).json()["vpc_id"]
+
+    subnet_ids = {
+        subnet["CidrBlock"]: subnet["SubnetId"]
+        for subnet in ec2.describe_subnets(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        )["Subnets"]
+    }
+    tables = route_tables_by_name(ec2, vpc_id)
+
+    def associated_subnets(table):
+        return [a["SubnetId"] for a in table.get("Associations", []) if not a.get("Main")]
+
+    assert associated_subnets(tables["integration-vpc-public-rt"]) == [subnet_ids["10.0.1.0/24"]]
+    assert associated_subnets(tables["integration-vpc-private-rt"]) == [subnet_ids["10.0.2.0/24"]]
+
+
 def test_post_stores_the_vpc_and_subnet_records(client, records_table):
     payload = client.post("/vpcs", body=BODY).json()
     vpc_id = payload["vpc_id"]
@@ -62,8 +124,8 @@ def test_post_stores_the_vpc_and_subnet_records(client, records_table):
         KeyConditionExpression=boto3.dynamodb.conditions.Key("vpc_id").eq(vpc_id)
     )["Items"]
 
-    assert sorted(row["sort_key"] for row in rows) == sorted([vpc_id] + payload["subnet_ids"])
-    vpc_row = next(row for row in rows if row["sort_key"] == vpc_id)
+    assert sorted(row["resource_key"] for row in rows) == sorted([vpc_id] + payload["subnet_ids"])
+    vpc_row = next(row for row in rows if row["resource_key"] == vpc_id)
     assert vpc_row["name"] == "integration-vpc"
     assert vpc_row["cidr"] == "10.0.0.0/16"
     assert "updated_at" in vpc_row
@@ -100,6 +162,26 @@ def test_delete_removes_the_vpc_subnets_and_records(client, ec2, records_table):
         KeyConditionExpression=boto3.dynamodb.conditions.Key("vpc_id").eq(vpc_id)
     )["Items"]
     assert rows == []
+
+
+def test_delete_removes_the_route_tables_and_the_internet_gateway(client, ec2):
+    created = client.post("/vpcs", body=BODY).json()
+    vpc_id = created["vpc_id"]
+
+    assert client.delete(f"/vpcs/{vpc_id}", vpc_id=vpc_id).status_code == 200
+
+    assert (
+        ec2.describe_route_tables(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])[
+            "RouteTables"
+        ]
+        == []
+    )
+    assert (
+        ec2.describe_internet_gateways(
+            Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
+        )["InternetGateways"]
+        == []
+    )
 
 
 def test_delete_is_not_idempotent_by_design(client):

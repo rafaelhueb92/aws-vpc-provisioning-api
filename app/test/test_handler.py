@@ -21,6 +21,14 @@ VALID_BODY = {
 }
 
 
+def route_table_named(fake_ec2, name: str) -> dict:
+    return next(
+        table
+        for table in fake_ec2.route_tables.values()
+        if any(tag["Value"] == name for tag in table["Tags"])
+    )
+
+
 def test_health_returns_200(unit_client):
     response = unit_client.get("/health")
 
@@ -119,23 +127,89 @@ def test_post_creates_vpc_and_subnets(unit_client, fake_ec2):
     assert response.status_code == 200
     payload = response.json()
     assert payload["vpc_id"] == "vpc-00000001"
-    assert payload["subnet_ids"] == ["subnet-00000002", "subnet-00000003"]
+    assert sorted(payload["subnet_ids"]) == ["subnet-00000002", "subnet-00000003"]
     assert "created with success" in payload["message"]
 
     assert fake_ec2.calls_of("create_vpc")[0][1] == {"CidrBlock": "10.0.0.0/16"}
     subnet_calls = fake_ec2.calls_of("create_subnet")
-    assert [call[1]["CidrBlock"] for call in subnet_calls] == ["10.0.1.0/24", "10.0.2.0/24"]
-    assert [call[1]["AvailabilityZone"] for call in subnet_calls] == [
-        "us-east-1a",
-        "us-east-1b",
-    ]
+    assert sorted(
+        (call[1]["CidrBlock"], call[1]["AvailabilityZone"]) for call in subnet_calls
+    ) == [("10.0.1.0/24", "us-east-1a"), ("10.0.2.0/24", "us-east-1b")]
 
 
 def test_post_maps_public_ip_only_for_public_subnets(unit_client, fake_ec2):
     unit_client.post("/vpcs", body=VALID_BODY)
 
     modified = [call[1]["SubnetId"] for call in fake_ec2.calls_of("modify_subnet_attribute")]
-    assert modified == ["subnet-00000002"]
+    assert [fake_ec2.subnets[subnet_id]["CidrBlock"] for subnet_id in modified] == [
+        "10.0.1.0/24"
+    ]
+
+
+def test_post_creates_a_separate_route_table_for_public_and_private_subnets(
+    unit_client, fake_ec2
+):
+    unit_client.post("/vpcs", body=VALID_BODY)
+
+    assert len(fake_ec2.calls_of("create_route_table")) == 2
+    names = {table["Tags"][0]["Value"] for table in fake_ec2.route_tables.values()}
+    assert names == {"my-vpc-public-rt", "my-vpc-private-rt"}
+
+
+def test_post_routes_the_public_route_table_to_the_internet_gateway(unit_client, fake_ec2):
+    unit_client.post("/vpcs", body=VALID_BODY)
+
+    igw_id = next(iter(fake_ec2.internet_gateways))
+    public_table = route_table_named(fake_ec2, "my-vpc-public-rt")
+    attached = fake_ec2.calls_of("attach_internet_gateway")
+
+    assert [call[1]["VpcId"] for call in attached] == ["vpc-00000001"]
+    assert public_table["Routes"] == [
+        {"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": igw_id, "State": "active"}
+    ]
+
+
+def test_post_keeps_the_private_route_table_without_an_outside_route(unit_client, fake_ec2):
+    unit_client.post("/vpcs", body=VALID_BODY)
+
+    private_table = route_table_named(fake_ec2, "my-vpc-private-rt")
+
+    assert private_table["Routes"] == []
+
+
+def test_post_associates_each_subnet_with_its_route_table(unit_client, fake_ec2):
+    unit_client.post("/vpcs", body=VALID_BODY)
+
+    subnet_ids = {
+        subnet["CidrBlock"]: subnet["SubnetId"] for subnet in fake_ec2.subnets.values()
+    }
+    public_table = route_table_named(fake_ec2, "my-vpc-public-rt")
+    private_table = route_table_named(fake_ec2, "my-vpc-private-rt")
+
+    assert [a["SubnetId"] for a in public_table["Associations"]] == [subnet_ids["10.0.1.0/24"]]
+    assert [a["SubnetId"] for a in private_table["Associations"]] == [subnet_ids["10.0.2.0/24"]]
+
+
+def test_post_without_a_public_subnet_skips_the_internet_gateway(unit_client, fake_ec2):
+    body = {
+        "name": "private-only",
+        "cidr": "10.0.0.0/16",
+        "subnets": [
+            {
+                "name": "private-1",
+                "cidr": "10.0.1.0/24",
+                "availability_zone": "us-east-1a",
+                "is_public": False,
+            }
+        ],
+    }
+
+    unit_client.post("/vpcs", body=body)
+
+    assert fake_ec2.calls_of("create_internet_gateway") == []
+    assert fake_ec2.calls_of("create_route") == []
+    names = {table["Tags"][0]["Value"] for table in fake_ec2.route_tables.values()}
+    assert names == {"private-only-private-rt"}
 
 
 def test_post_waits_for_the_vpc_and_every_subnet(unit_client, fake_ec2):
@@ -153,16 +227,23 @@ def test_post_persists_the_vpc_and_its_subnets(unit_client, fake_table):
     unit_client.post("/vpcs", body=VALID_BODY)
 
     rows = fake_table.rows("vpc-00000001")
-    assert [row["sort_key"] for row in rows] == [
+    assert [row["resource_key"] for row in rows] == [
         "subnet-00000002",
         "subnet-00000003",
         "vpc-00000001",
     ]
-    vpc_row = next(row for row in rows if row["sort_key"] == "vpc-00000001")
+    vpc_row = next(row for row in rows if row["resource_key"] == "vpc-00000001")
     assert vpc_row["name"] == "my-vpc"
     assert vpc_row["cidr"] == "10.0.0.0/16"
     assert rows[0]["is_public"] is True
     assert rows[1]["is_public"] is False
+
+
+def test_post_persists_the_records_in_a_batch(unit_client, fake_table):
+    unit_client.post("/vpcs", body=VALID_BODY)
+
+    assert len(fake_table.calls_of("batch_put_item")) == 3
+    assert fake_table.calls_of("put_item") == []
 
 
 def test_post_without_subnets_is_allowed(unit_client, fake_ec2):
@@ -171,13 +252,14 @@ def test_post_without_subnets_is_allowed(unit_client, fake_ec2):
     assert response.status_code == 200
     assert response.json()["subnet_ids"] == []
     assert fake_ec2.calls_of("create_subnet") == []
+    assert fake_ec2.route_tables == {}
 
 
 def test_get_returns_the_stored_vpc(unit_client, fake_table):
     fake_table.put_item(
         Item={
             "vpc_id": "vpc-1",
-            "sort_key": "vpc-1",
+            "resource_key": "vpc-1",
             "name": "my-vpc",
             "cidr": "10.0.0.0/16",
         }
@@ -201,7 +283,7 @@ def test_get_serializes_dynamodb_numbers(unit_client, fake_table):
     fake_table.put_item(
         Item={
             "vpc_id": "vpc-1",
-            "sort_key": "vpc-1",
+            "resource_key": "vpc-1",
             "name": "my-vpc",
             "subnet_count": Decimal("3"),
         }
@@ -214,8 +296,8 @@ def test_get_serializes_dynamodb_numbers(unit_client, fake_table):
 
 
 def test_delete_removes_subnets_then_vpc_then_records(unit_client, fake_table):
-    fake_table.put_item(Item={"vpc_id": "vpc-00000001", "sort_key": "vpc-00000001"})
-    fake_table.put_item(Item={"vpc_id": "vpc-00000001", "sort_key": "subnet-00000002"})
+    fake_table.put_item(Item={"vpc_id": "vpc-00000001", "resource_key": "vpc-00000001"})
+    fake_table.put_item(Item={"vpc_id": "vpc-00000001", "resource_key": "subnet-00000002"})
     unit_client.post("/vpcs", body=VALID_BODY)
 
     response = unit_client.delete("/vpcs/vpc-00000001", vpc_id="vpc-00000001")
@@ -223,6 +305,18 @@ def test_delete_removes_subnets_then_vpc_then_records(unit_client, fake_table):
     assert response.status_code == 200
     assert "deleted" in response.json()["message"]
     assert fake_table.rows("vpc-00000001") == []
+
+
+def test_delete_removes_the_stored_records_in_a_batch(unit_client, fake_table):
+    unit_client.post("/vpcs", body=VALID_BODY)
+    stored = [call[2] for call in fake_table.calls_of("batch_put_item")]
+    fake_table.calls.clear()
+
+    unit_client.delete("/vpcs/vpc-00000001", vpc_id="vpc-00000001")
+
+    deleted = [call[2] for call in fake_table.calls_of("batch_delete_item")]
+    assert sorted(deleted) == sorted(stored)
+    assert fake_table.calls_of("delete_item") == []
 
 
 def test_delete_removes_subnets_before_the_vpc(unit_client, fake_ec2):
@@ -236,9 +330,23 @@ def test_delete_removes_subnets_before_the_vpc(unit_client, fake_ec2):
     assert operations.index("delete_subnet") < operations.index("delete_vpc")
 
 
+def test_delete_removes_the_route_tables(unit_client, fake_ec2):
+    unit_client.post("/vpcs", body=VALID_BODY)
+    fake_ec2.calls.clear()
+
+    unit_client.delete("/vpcs/vpc-00000001", vpc_id="vpc-00000001")
+
+    operations = fake_ec2.operations()
+    assert len(fake_ec2.calls_of("disassociate_route_table")) == 2
+    assert len(fake_ec2.calls_of("delete_route_table")) == 2
+    assert operations.index("disassociate_route_table") < operations.index("delete_route_table")
+    assert operations.index("delete_route_table") < operations.index("delete_subnet")
+    assert fake_ec2.route_tables == {}
+
+
 def test_delete_detaches_and_deletes_the_internet_gateway(unit_client, fake_ec2):
     unit_client.post("/vpcs", body=VALID_BODY)
-    igw_id = fake_ec2.create_internet_gateway()["InternetGateway"]["InternetGatewayId"]
+    igw_id = next(iter(fake_ec2.internet_gateways))
     fake_ec2.calls.clear()
 
     unit_client.delete("/vpcs/vpc-00000001", vpc_id="vpc-00000001")

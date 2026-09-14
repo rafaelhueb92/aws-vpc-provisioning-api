@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from config import get_settings
 from models.vpc import CreateVpcRequest
+from services.route_table import RouteTable
 from services.storage import Storage
 from services.subnet import Subnet
 from services.vpc import VPC
@@ -29,6 +30,7 @@ client_dynamo = boto3.resource(
 
 vpc = VPC(client,logger)
 subnet = Subnet(client,logger)
+route_table = RouteTable(client,logger)
 storage = Storage(client_dynamo,settings.vpc_table)
 
 def _response(status_code: int, payload) -> dict:
@@ -62,9 +64,14 @@ def _route(event:dict) -> dict:
                 vpc_id,[definition.model_dump() for definition in vpc_request.subnets]
             )
 
-            storage.insert(vpc_id,vpc_id,{'name': vpc_request.name,'cidr': vpc_request.cidr})
-            for created in subnets:
-                storage.insert(vpc_id,created['subnet_id'],created)
+            igw_id = vpc.create_igw_if_public_subnet(
+                vpc_id,subnets,name=f'{vpc_request.name}-igw'
+            )
+            route_table.create_for_subnets(vpc_id,subnets,vpc_request.name,igw_id=igw_id)
+
+            records = [(vpc_id, {'name': vpc_request.name, 'cidr': vpc_request.cidr})]
+            records += [(created['subnet_id'], created) for created in subnets]
+            storage.insert_many(vpc_id, records)
 
             return _response(200, {
                 'message': f'VPC {vpc_id} created with success.',
@@ -86,10 +93,12 @@ def _route(event:dict) -> dict:
                     return _response(404, {'message': f'VPC {vpc_id} not found'})
                 return _response(200, founded_vpc)
              elif method == 'DELETE':
+                  route_table.delete_route_tables(vpc_id)
                   subnet.delete_subnets(vpc_id)
                   vpc.delete_vpc(vpc_id)
-                  for stored in storage.list_all(vpc_id):
-                      storage.delete(vpc_id,stored['sort_key'])
+                  storage.delete_many(
+                      vpc_id,[stored['resource_key'] for stored in storage.list_all(vpc_id)]
+                  )
                   return _response(200, {'message': f'VPC {vpc_id} deleted.'})
 
     elif (path or '').startswith('/health') and method == 'GET':

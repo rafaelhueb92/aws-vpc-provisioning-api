@@ -3,7 +3,7 @@ VpcRecord:
   properties:
     vpc_id:
       type: string
-    sort_key:
+    resource_key:
       type: string
     name:
       type: string
