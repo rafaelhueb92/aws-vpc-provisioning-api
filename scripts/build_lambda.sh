@@ -17,4 +17,9 @@ pip install --quiet --target "${out_dir}" \
 
 cp -r "${app_dir}"/* "${out_dir}/"
 
+test -f "${out_dir}/handler.py" || {
+  echo "Lambda handler was not staged" >&2
+  exit 1
+}
+
 echo "Python code build"
