@@ -67,7 +67,7 @@ jobs:
         run: python -m pytest -v
 
   terraform:
-    name: ${{ github.event_name == 'pull_request' && 'plan' || (inputs.destroy && 'destroy' || 'apply') }}
+    name: ${{ inputs.destroy && 'destroy' || 'apply' }}
     runs-on: ubuntu-latest
     needs: test
 
