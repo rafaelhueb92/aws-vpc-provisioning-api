@@ -46,7 +46,8 @@
         "lambda:RemovePermission",
         "lambda:TagResource",
         "lambda:UntagResource",
-        "lambda:ListTags"
+        "lambda:ListTags",
+        "lambda:GetFunctionCodeSigningConfig"
       ],
       "Resource": "arn:aws:lambda:us-east-1:*:function:vpc-provisioning-api-dev"
     },
@@ -99,7 +100,9 @@
       ],
       "Resource": [
         "arn:aws:apigateway:us-east-1::/apis",
-        "arn:aws:apigateway:us-east-1::/apis/*"
+        "arn:aws:apigateway:us-east-1::/apis/*",
+        "arn:aws:apigateway:us-east-1::/tags",
+        "arn:aws:apigateway:us-east-1::/tags/*"
       ]
     },
     {
